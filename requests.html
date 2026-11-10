@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Client requests | Dexter HiTech CRM</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+  <script src="firebase-config.js"></script>
+  <script src="app.js"></script>
+</head>
+<body>
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <a class="brand" href="index.html">
+      <span class="brand-mark">D</span>
+      <span>DEXTER <b>HITECH</b><small>CLIENT OPERATIONS</small></span>
+    </a>
+
+    <div class="nav-label">WORKSPACE</div>
+    <a class="nav" href="index.html" id="nav-dashboard">▦ &nbsp; Overview</a>
+    <a class="nav" href="clients.html" id="nav-clients">♙ &nbsp; Clients</a>
+    <a class="nav" href="tasks.html" id="nav-tasks">☷ &nbsp; Tasks & deadlines</a>
+    <a class="nav" href="requests.html" id="nav-requests">↗ &nbsp; Client requests</a>
+    <a class="nav" href="billing.html" id="nav-billing">▤ &nbsp; Billing</a>
+
+    <div class="nav-label team-label" id="team-nav-header">ADMINISTRATION</div>
+    <a class="nav" href="team.html" id="nav-team">♧ &nbsp; Team access</a>
+
+    <div class="sidebar-bottom">
+      <div class="user-chip">
+        <span class="avatar" id="user-avatar">A</span>
+        <span>
+          <b id="user-name">Dexter HiTech Admin</b>
+          <small id="user-role">Admin</small>
+        </span>
+      </div>
+      <a class="logout" href="account.html">My account · Password</a>
+      <a class="logout" href="login.html" onclick="Auth.logout()">Sign out ↗</a>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <span class="eyebrow">DEXTER HITECH / OPERATIONS</span>
+        <h1>Client requests</h1>
+      </div>
+      <div class="top-actions">
+        <button class="export-btn" onclick="App.exportToExcel()">↓ &nbsp; Download Excel</button>
+        <span class="date-label" id="today-date">2026-11-10</span>
+      </div>
+    </header>
+
+    <div id="flash-message" class="flash"></div>
+
+    <div class="page-intro">
+      <p>Capture every WhatsApp, call and email request so nothing gets lost.</p>
+    </div>
+
+    <!-- Log Request Form -->
+    <section class="panel form-panel">
+      <div class="panel-head">
+        <div>
+          <h3>Log a client request</h3>
+          <p>Record the request as soon as it comes in.</p>
+        </div>
+      </div>
+      <form id="request-form" class="form-grid">
+        <label>Client
+          <select id="request-client-select" name="client_id">
+            <option value="">Select client</option>
+          </select>
+        </label>
+        <label>Date received
+          <input type="date" name="received_date">
+        </label>
+        <label class="span-two">Request details *
+          <textarea name="request" required rows="2" placeholder="What did the client ask for?"></textarea>
+        </label>
+        <label>Owner
+          <select id="request-owner-select" name="owner_id">
+            <option value="">Unassigned</option>
+          </select>
+        </label>
+        <label>Target date
+          <input type="date" name="due_date">
+        </label>
+        <label>Status
+          <select name="status">
+            <option value="New">New</option>
+            <option value="In Progress">In Progress</option>
+            <option value="Waiting on Client">Waiting on Client</option>
+            <option value="Completed">Completed</option>
+            <option value="Closed">Closed</option>
+          </select>
+        </label>
+        <label>Internal notes
+          <input name="notes" placeholder="Urgency or follow-up notes">
+        </label>
+        <div class="form-submit">
+          <button type="submit" class="primary">Log request →</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Request Register -->
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h3>Request register</h3>
+          <p id="requests-count">0 requests</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>REQUEST</th>
+              <th>CLIENT</th>
+              <th>RECEIVED</th>
+              <th>OWNER</th>
+              <th>TARGET</th>
+              <th>STATUS</th>
+              <th>ACTION</th>
+            </tr>
+          </thead>
+          <tbody id="requests-table-body">
+            <tr><td colspan="7" class="empty">No requests logged yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer>
+      DEXTER HITECH <span>CLIENT OPERATIONS WORKSPACE</span>
+    </footer>
+  </main>
+</body>
+</html>

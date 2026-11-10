@@ -3,649 +3,136 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Dexter HiTech CRM</title>
+  <title>Overview | Dexter HiTech CRM</title>
   <link rel="stylesheet" href="style.css">
-  
-  <!-- SheetJS for Client-Side Excel Export (No Python required) -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-
-  <!-- Firebase Web SDK Compat (CDN - No build tools required) -->
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
-
-  <!-- Firebase configuration and App logic -->
   <script src="firebase-config.js"></script>
   <script src="app.js"></script>
 </head>
 <body>
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <a class="brand" href="index.html">
+      <span class="brand-mark">D</span>
+      <span>DEXTER <b>HITECH</b><small>CLIENT OPERATIONS</small></span>
+    </a>
 
-  <!-- ===================================================================== -->
-  <!-- 1. AUTH / SIGN IN VIEW                                                -->
-  <!-- ===================================================================== -->
-  <div id="auth-container" style="display:none;">
-    <div class="login-wrap">
-      <div class="login-card">
-        <a class="brand login-brand" href="#">
-          <span class="brand-mark">D</span>
-          <span>DEXTER <b>HITECH</b><small>CLIENT OPERATIONS</small></span>
-        </a>
-        <div class="eyebrow">TEAM WORKSPACE</div>
-        <h1>Welcome back.</h1>
-        <p class="muted">Sign in to manage your client operations.</p>
-        
-        <form id="login-form" class="form-stack">
-          <label>Username or Email
-            <input id="login-username" required autofocus placeholder="admin" value="admin">
-          </label>
-          <label>Password
-            <input type="password" id="login-password" required placeholder="ChangeMe123!" value="ChangeMe123!">
-          </label>
-          <button type="submit" class="primary full">Sign in <span>→</span></button>
-        </form>
+    <div class="nav-label">WORKSPACE</div>
+    <a class="nav" href="index.html" id="nav-dashboard">▦ &nbsp; Overview</a>
+    <a class="nav" href="clients.html" id="nav-clients">♙ &nbsp; Clients</a>
+    <a class="nav" href="tasks.html" id="nav-tasks">☷ &nbsp; Tasks & deadlines</a>
+    <a class="nav" href="requests.html" id="nav-requests">↗ &nbsp; Client requests</a>
+    <a class="nav" href="billing.html" id="nav-billing">▤ &nbsp; Billing</a>
 
-        <div id="login-error" class="flash error" style="display:none; margin-top:14px;"></div>
-        <small class="login-note">Default login: <b>admin</b> / <b>ChangeMe123!</b></small>
+    <div class="nav-label team-label" id="team-nav-header">ADMINISTRATION</div>
+    <a class="nav" href="team.html" id="nav-team">♧ &nbsp; Team access</a>
+
+    <div class="sidebar-bottom">
+      <div class="user-chip">
+        <span class="avatar" id="user-avatar">A</span>
+        <span>
+          <b id="user-name">Dexter HiTech Admin</b>
+          <small id="user-role">Admin</small>
+        </span>
       </div>
+      <a class="logout" href="account.html">My account · Password</a>
+      <a class="logout" href="login.html" onclick="Auth.logout()">Sign out ↗</a>
+    </div>
+  </aside>
 
-      <div class="login-side">
-        <div class="side-orb"></div>
-        <span class="eyebrow">ONE WORKSPACE. EVERY CLIENT.</span>
-        <h2>Keep every detail<br>moving forward.</h2>
-        <p>Clients, delivery, requests and billing — organised in one place.</p>
-        <span class="side-footer">DEXTER HITECH · 2026</span>
+  <!-- Main Content -->
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <span class="eyebrow">DEXTER HITECH / OPERATIONS</span>
+        <h1>Overview</h1>
+      </div>
+      <div class="top-actions">
+        <button class="export-btn" onclick="App.exportToExcel()">↓ &nbsp; Download Excel</button>
+        <span class="date-label" id="today-date">2026-11-10</span>
+      </div>
+    </header>
+
+    <div id="flash-message" class="flash"></div>
+
+    <section class="welcome-row">
+      <div>
+        <h2>Your operations, at a glance.</h2>
+        <p class="muted">A clear view of active client work and what needs attention.</p>
+      </div>
+      <a class="primary small-btn" href="clients.html">＋ Add client</a>
+    </section>
+
+    <div class="stats-grid">
+      <div class="stat-card">
+        <span>ACTIVE CLIENTS</span>
+        <strong id="stat-active-clients">0</strong>
+        <small>Currently active accounts</small>
+      </div>
+      <div class="stat-card">
+        <span>OPEN TASKS</span>
+        <strong id="stat-open-tasks">0</strong>
+        <small>Work still in progress</small>
+      </div>
+      <div class="stat-card">
+        <span>OPEN REQUESTS</span>
+        <strong id="stat-open-requests">0</strong>
+        <small>Client items to action</small>
+      </div>
+      <div class="stat-card alert-stat">
+        <span>OVERDUE INVOICES</span>
+        <strong id="stat-overdue-invoices">0</strong>
+        <small>Past due date · unpaid</small>
       </div>
     </div>
-  </div>
 
-  <!-- ===================================================================== -->
-  <!-- 2. MAIN APP CONTAINER                                                 -->
-  <!-- ===================================================================== -->
-  <div id="app-container" style="display:none;">
-    <!-- Sidebar Navigation -->
-    <aside class="sidebar">
-      <a class="brand" onclick="App.showView('dashboard')">
-        <span class="brand-mark">D</span>
-        <span>DEXTER <b>HITECH</b><small>CLIENT OPERATIONS</small></span>
-      </a>
-
-      <div class="nav-label">WORKSPACE</div>
-      <a class="nav selected" data-view="dashboard">▦ &nbsp; <span>Overview</span></a>
-      <a class="nav" data-view="clients">♙ &nbsp; <span>Clients</span></a>
-      <a class="nav" data-view="tasks">☷ &nbsp; <span>Tasks & deadlines</span></a>
-      <a class="nav" data-view="requests">↗ &nbsp; <span>Client requests</span></a>
-      <a class="nav" data-view="billing">▤ &nbsp; <span>Billing</span></a>
-
-      <div id="team-nav-header" class="nav-label team-label" style="display:none;">ADMINISTRATION</div>
-      <a id="team-nav-item" class="nav" data-view="team" style="display:none;">♧ &nbsp; <span>Team access</span></a>
-
-      <div class="sidebar-bottom">
-        <div class="user-chip">
-          <span class="avatar" id="user-avatar">A</span>
-          <span>
-            <b id="user-name">Admin</b>
-            <small id="user-role">Admin</small>
-          </span>
-        </div>
-        <a class="logout" onclick="App.showView('account')">My account · Password</a>
-        <a class="logout" onclick="Auth.logout()">Sign out ↗</a>
-      </div>
-    </aside>
-
-    <!-- Main Workspace Area -->
-    <main class="main">
-      <header class="topbar">
-        <div>
-          <span class="eyebrow">DEXTER HITECH / OPERATIONS</span>
-          <h1 id="topbar-heading">Overview</h1>
-        </div>
-        <div class="top-actions">
-          <button class="export-btn" onclick="App.exportToExcel()">↓ &nbsp; Download Excel</button>
-          <span class="date-label" id="today-date">2026-11-10</span>
-        </div>
-      </header>
-
-      <!-- Global Flash / Toast Message -->
-      <div id="flash-message" class="flash"></div>
-
-      <!-- ================================================================= -->
-      <!-- VIEW: DASHBOARD                                                   -->
-      <!-- ================================================================= -->
-      <section id="view-dashboard" class="view-section active">
-        <section class="welcome-row">
+    <div class="dashboard-grid">
+      <section class="panel">
+        <div class="panel-head">
           <div>
-            <h2>Your operations, at a glance.</h2>
-            <p class="muted">A clear view of active client work and what needs attention.</p>
+            <h3>Upcoming work</h3>
+            <p>Tasks that still need attention</p>
           </div>
-          <button class="primary small-btn" onclick="App.showView('clients')">＋ Add client</button>
-        </section>
-
-        <div class="stats-grid">
-          <div class="stat-card">
-            <span>ACTIVE CLIENTS</span>
-            <strong id="stat-active-clients">0</strong>
-            <small>Currently active accounts</small>
-          </div>
-          <div class="stat-card">
-            <span>OPEN TASKS</span>
-            <strong id="stat-open-tasks">0</strong>
-            <small>Work still in progress</small>
-          </div>
-          <div class="stat-card">
-            <span>OPEN REQUESTS</span>
-            <strong id="stat-open-requests">0</strong>
-            <small>Client items to action</small>
-          </div>
-          <div class="stat-card alert-stat">
-            <span>OVERDUE INVOICES</span>
-            <strong id="stat-overdue-invoices">0</strong>
-            <small>Past due date · unpaid</small>
-          </div>
+          <a href="tasks.html">View all →</a>
         </div>
-
-        <div class="dashboard-grid">
-          <!-- Upcoming Tasks Panel -->
-          <section class="panel">
-            <div class="panel-head">
-              <div>
-                <h3>Upcoming work</h3>
-                <p>Tasks that still need attention</p>
-              </div>
-              <a onclick="App.showView('tasks')">View all →</a>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>TASK</th>
-                    <th>CLIENT</th>
-                    <th>OWNER</th>
-                    <th>DUE DATE</th>
-                    <th>STATUS</th>
-                  </tr>
-                </thead>
-                <tbody id="dashboard-tasks-table">
-                  <tr><td colspan="5" class="empty">No open tasks yet. Add your first task to get started.</td></tr>
-                </tbody>
-              </table>
-            </div>
-          </section>
-
-          <!-- Latest Client Requests Panel -->
-          <section class="panel">
-            <div class="panel-head">
-              <div>
-                <h3>Latest client requests</h3>
-                <p>Recently logged requests</p>
-              </div>
-              <a onclick="App.showView('requests')">View all →</a>
-            </div>
-            <div id="dashboard-recent-requests">
-              <div class="empty">No client requests logged yet.</div>
-            </div>
-          </section>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>TASK</th>
+                <th>CLIENT</th>
+                <th>OWNER</th>
+                <th>DUE DATE</th>
+                <th>STATUS</th>
+              </tr>
+            </thead>
+            <tbody id="dashboard-tasks-table">
+              <tr><td colspan="5" class="empty">No open tasks yet. Add your first task to get started.</td></tr>
+            </tbody>
+          </table>
         </div>
       </section>
 
-      <!-- ================================================================= -->
-      <!-- VIEW: CLIENTS                                                     -->
-      <!-- ================================================================= -->
-      <section id="view-clients" class="view-section">
-        <div class="page-intro">
-          <p>Keep client details, services, ownership and monthly value in one place.</p>
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <h3>Latest client requests</h3>
+            <p>Recently logged requests</p>
+          </div>
+          <a href="requests.html">View all →</a>
         </div>
-
-        <section class="panel form-panel">
-          <div class="panel-head">
-            <div>
-              <h3>Add a client</h3>
-              <p>Create a client record and assign an owner.</p>
-            </div>
-          </div>
-          <form id="client-form" class="form-grid">
-            <label>Client / brand name *
-              <input name="name" required placeholder="Acme Media">
-            </label>
-            <label>Company / business
-              <input name="company" placeholder="Acme Ltd.">
-            </label>
-            <label>Contact person
-              <input name="contact_person" placeholder="John Doe">
-            </label>
-            <label>Phone
-              <input name="phone" placeholder="+91 98765 43210">
-            </label>
-            <label>Email
-              <input type="email" name="email" placeholder="client@acme.com">
-            </label>
-            <label>Service provided
-              <input name="service" placeholder="e.g. Social media management">
-            </label>
-            <label>Monthly fee (₹)
-              <input type="number" step="0.01" min="0" name="monthly_fee" placeholder="25000">
-            </label>
-            <label>Start date
-              <input type="date" name="start_date">
-            </label>
-            <label>Account owner
-              <select id="client-owner-select" name="owner_id">
-                <option value="">Unassigned</option>
-              </select>
-            </label>
-            <label>Status
-              <select name="status">
-                <option value="Active">Active</option>
-                <option value="On Hold">On Hold</option>
-                <option value="Completed">Completed</option>
-              </select>
-            </label>
-            <label class="span-two">Notes
-              <textarea name="notes" rows="2" placeholder="Key preferences, points of contact..."></textarea>
-            </label>
-            <div class="form-submit">
-              <button type="submit" class="primary">Save client →</button>
-            </div>
-          </form>
-        </section>
-
-        <section class="panel">
-          <div class="panel-head">
-            <div>
-              <h3>Client directory</h3>
-              <p id="clients-count">0 records</p>
-            </div>
-          </div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>CLIENT</th>
-                  <th>CONTACT</th>
-                  <th>SERVICE</th>
-                  <th>OWNER</th>
-                  <th>MONTHLY FEE</th>
-                  <th>STATUS</th>
-                  <th>ACTION</th>
-                </tr>
-              </thead>
-              <tbody id="clients-table-body">
-                <tr><td colspan="7" class="empty">No clients added yet.</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
+        <div id="dashboard-recent-requests">
+          <div class="empty">No client requests logged yet.</div>
+        </div>
       </section>
+    </div>
 
-      <!-- ================================================================= -->
-      <!-- VIEW: TASKS                                                       -->
-      <!-- ================================================================= -->
-      <section id="view-tasks" class="view-section">
-        <div class="page-intro">
-          <p>Assign clear ownership, set deadlines and track delivery across every account.</p>
-        </div>
-
-        <section class="panel form-panel">
-          <div class="panel-head">
-            <div>
-              <h3>Create a task</h3>
-              <p>Give every deliverable an owner and a due date.</p>
-            </div>
-          </div>
-          <form id="task-form" class="form-grid">
-            <label>Task title *
-              <input name="title" required placeholder="Launch campaign creatives">
-            </label>
-            <label>Client
-              <select id="task-client-select" name="client_id">
-                <option value="">Internal / none</option>
-              </select>
-            </label>
-            <label>Assignee
-              <select id="task-assignee-select" name="assignee_id">
-                <option value="">Unassigned</option>
-              </select>
-            </label>
-            <label>Due date
-              <input type="date" name="due_date">
-            </label>
-            <label>Priority
-              <select name="priority">
-                <option value="Medium">Medium</option>
-                <option value="Low">Low</option>
-                <option value="High">High</option>
-                <option value="Urgent">Urgent</option>
-              </select>
-            </label>
-            <label>Status
-              <select name="status">
-                <option value="To Do">To Do</option>
-                <option value="In Progress">In Progress</option>
-                <option value="Review">Review</option>
-                <option value="Waiting on Client">Waiting on Client</option>
-                <option value="Done">Done</option>
-              </select>
-            </label>
-            <label class="span-two">Description
-              <textarea name="description" rows="2" placeholder="Task specifics, requirements..."></textarea>
-            </label>
-            <div class="form-submit">
-              <button type="submit" class="primary">Create task →</button>
-            </div>
-          </form>
-        </section>
-
-        <section class="panel">
-          <div class="panel-head">
-            <div>
-              <h3>Task register</h3>
-              <p id="tasks-count">0 tasks</p>
-            </div>
-          </div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>TASK</th>
-                  <th>CLIENT</th>
-                  <th>ASSIGNEE</th>
-                  <th>DUE</th>
-                  <th>PRIORITY</th>
-                  <th>UPDATE STATUS</th>
-                  <th>ACTION</th>
-                </tr>
-              </thead>
-              <tbody id="tasks-table-body">
-                <tr><td colspan="7" class="empty">No tasks created yet.</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
-      </section>
-
-      <!-- ================================================================= -->
-      <!-- VIEW: REQUESTS                                                    -->
-      <!-- ================================================================= -->
-      <section id="view-requests" class="view-section">
-        <div class="page-intro">
-          <p>Capture every WhatsApp, call and email request so nothing gets lost.</p>
-        </div>
-
-        <section class="panel form-panel">
-          <div class="panel-head">
-            <div>
-              <h3>Log a client request</h3>
-              <p>Record the request as soon as it comes in.</p>
-            </div>
-          </div>
-          <form id="request-form" class="form-grid">
-            <label>Client
-              <select id="request-client-select" name="client_id">
-                <option value="">Select client</option>
-              </select>
-            </label>
-            <label>Date received
-              <input type="date" name="received_date">
-            </label>
-            <label class="span-two">Request details *
-              <textarea name="request" required rows="2" placeholder="What did the client ask for?"></textarea>
-            </label>
-            <label>Owner
-              <select id="request-owner-select" name="owner_id">
-                <option value="">Unassigned</option>
-              </select>
-            </label>
-            <label>Target date
-              <input type="date" name="due_date">
-            </label>
-            <label>Status
-              <select name="status">
-                <option value="New">New</option>
-                <option value="In Progress">In Progress</option>
-                <option value="Waiting on Client">Waiting on Client</option>
-                <option value="Completed">Completed</option>
-                <option value="Closed">Closed</option>
-              </select>
-            </label>
-            <label>Internal notes
-              <input name="notes" placeholder="Urgency or follow-up notes">
-            </label>
-            <div class="form-submit">
-              <button type="submit" class="primary">Log request →</button>
-            </div>
-          </form>
-        </section>
-
-        <section class="panel">
-          <div class="panel-head">
-            <div>
-              <h3>Request register</h3>
-              <p id="requests-count">0 requests</p>
-            </div>
-          </div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>REQUEST</th>
-                  <th>CLIENT</th>
-                  <th>RECEIVED</th>
-                  <th>OWNER</th>
-                  <th>TARGET</th>
-                  <th>STATUS</th>
-                  <th>ACTION</th>
-                </tr>
-              </thead>
-              <tbody id="requests-table-body">
-                <tr><td colspan="7" class="empty">No requests logged yet.</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
-      </section>
-
-      <!-- ================================================================= -->
-      <!-- VIEW: BILLING                                                     -->
-      <!-- ================================================================= -->
-      <section id="view-billing" class="view-section">
-        <div class="page-intro">
-          <p>Track monthly retainers, invoice dates, payment status and outstanding balances.</p>
-        </div>
-
-        <div class="mini-stats">
-          <div class="stat-card">
-            <span>PAYMENTS RECEIVED</span>
-            <strong id="billing-total-paid">₹0.00</strong>
-          </div>
-          <div class="stat-card">
-            <span>PAYMENTS PENDING</span>
-            <strong id="billing-total-pending">₹0.00</strong>
-          </div>
-        </div>
-
-        <section class="panel form-panel">
-          <div class="panel-head">
-            <div>
-              <h3>Add billing record</h3>
-              <p>Enter one record per client invoice and billing period.</p>
-            </div>
-          </div>
-          <form id="billing-form" class="form-grid">
-            <label>Client *
-              <select id="billing-client-select" name="client_id" required>
-                <option value="">Select client</option>
-              </select>
-            </label>
-            <label>Invoice number
-              <input name="invoice_no" placeholder="INV-2026-001">
-            </label>
-            <label>Billing month
-              <input name="billing_month" placeholder="November 2026">
-            </label>
-            <label>Amount (₹) *
-              <input type="number" step="0.01" min="0" name="amount" required placeholder="50000">
-            </label>
-            <label>Invoice date
-              <input type="date" name="invoice_date">
-            </label>
-            <label>Due date
-              <input type="date" name="due_date">
-            </label>
-            <label>Payment date
-              <input type="date" name="payment_date">
-            </label>
-            <label>Status
-              <select name="status">
-                <option value="Pending">Pending</option>
-                <option value="Paid">Paid</option>
-                <option value="Partially Paid">Partially Paid</option>
-                <option value="Overdue">Overdue</option>
-                <option value="Cancelled">Cancelled</option>
-              </select>
-            </label>
-            <label class="span-two">Notes
-              <input name="notes" placeholder="Payment method or transaction ID">
-            </label>
-            <div class="form-submit">
-              <button type="submit" class="primary">Save billing record →</button>
-            </div>
-          </form>
-        </section>
-
-        <section class="panel">
-          <div class="panel-head">
-            <div>
-              <h3>Invoice register</h3>
-              <p id="billing-count">0 billing records</p>
-            </div>
-          </div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>CLIENT / INVOICE</th>
-                  <th>PERIOD</th>
-                  <th>AMOUNT</th>
-                  <th>INVOICE DATE</th>
-                  <th>DUE DATE</th>
-                  <th>PAYMENT</th>
-                  <th>ACTION</th>
-                </tr>
-              </thead>
-              <tbody id="billing-table-body">
-                <tr><td colspan="7" class="empty">No billing records yet.</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
-      </section>
-
-      <!-- ================================================================= -->
-      <!-- VIEW: TEAM ACCESS (ADMIN ONLY)                                    -->
-      <!-- ================================================================= -->
-      <section id="view-team" class="view-section">
-        <div class="page-intro">
-          <p>Create individual sign-in accounts for your team. Only administrators can access this page.</p>
-        </div>
-
-        <section class="panel form-panel">
-          <div class="panel-head">
-            <div>
-              <h3>Create team account</h3>
-              <p>Use a unique username and a strong temporary password.</p>
-            </div>
-          </div>
-          <form id="team-form" class="form-grid">
-            <label>Full name *
-              <input name="full_name" required placeholder="Alex Turner">
-            </label>
-            <label>Username *
-              <input name="username" required placeholder="alex">
-            </label>
-            <label>Temporary password *
-              <input type="password" name="password" minlength="8" required placeholder="Min 8 characters">
-            </label>
-            <label>Role
-              <select name="role">
-                <option value="Member">Member</option>
-                <option value="Admin">Admin</option>
-              </select>
-            </label>
-            <div class="form-submit">
-              <button type="submit" class="primary">Create account →</button>
-            </div>
-          </form>
-        </section>
-
-        <section class="panel">
-          <div class="panel-head">
-            <div>
-              <h3>Team directory</h3>
-              <p id="team-count">0 accounts</p>
-            </div>
-          </div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>TEAM MEMBER</th>
-                  <th>USERNAME</th>
-                  <th>ACCESS ROLE</th>
-                </tr>
-              </thead>
-              <tbody id="team-table-body">
-                <tr><td colspan="3" class="empty">No team accounts yet.</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
-      </section>
-
-      <!-- ================================================================= -->
-      <!-- VIEW: ACCOUNT / PASSWORD                                          -->
-      <!-- ================================================================= -->
-      <section id="view-account" class="view-section">
-        <div class="page-intro">
-          <p>Update your sign-in password. Use a unique password with at least 8 characters.</p>
-        </div>
-
-        <section class="panel form-panel" style="max-width:650px">
-          <div class="panel-head">
-            <div>
-              <h3>Change password</h3>
-              <p>Your account: <span id="account-username-display">admin</span></p>
-            </div>
-          </div>
-          <form id="password-form" class="form-grid" style="grid-template-columns:1fr">
-            <label>Current password
-              <input type="password" name="current_password" required placeholder="Current password">
-            </label>
-            <label>New password
-              <input type="password" name="new_password" minlength="8" required placeholder="Min 8 characters">
-            </label>
-            <label>Confirm new password
-              <input type="password" name="confirm_password" minlength="8" required placeholder="Re-type new password">
-            </label>
-            <div class="form-submit">
-              <button type="submit" class="primary">Update password →</button>
-            </div>
-          </form>
-        </section>
-      </section>
-
-      <!-- Footer with Cloud Status indicator -->
-      <footer>
-        <div>
-          DEXTER HITECH <span>CLIENT OPERATIONS WORKSPACE</span>
-        </div>
-        <div>
-          <span id="cloud-status-badge" class="cloud-pill">
-            <span class="cloud-dot"></span> Checking connection...
-          </span>
-        </div>
-      </footer>
-    </main>
-  </div>
-
+    <footer>
+      DEXTER HITECH <span>CLIENT OPERATIONS WORKSPACE</span>
+    </footer>
+  </main>
 </body>
 </html>
-

@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Overview | Dexter HiTech CRM</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+  <script src="firebase-config.js"></script>
+  <script src="app.js"></script>
+</head>
+<body>
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <a class="brand" href="index.html">
+      <span class="brand-mark">D</span>
+      <span>DEXTER <b>HITECH</b><small>CLIENT OPERATIONS</small></span>
+    </a>
+
+    <div class="nav-label">WORKSPACE</div>
+    <a class="nav" href="index.html" id="nav-dashboard">▦ &nbsp; Overview</a>
+    <a class="nav" href="clients.html" id="nav-clients">♙ &nbsp; Clients</a>
+    <a class="nav" href="tasks.html" id="nav-tasks">☷ &nbsp; Tasks & deadlines</a>
+    <a class="nav" href="requests.html" id="nav-requests">↗ &nbsp; Client requests</a>
+    <a class="nav" href="billing.html" id="nav-billing">▤ &nbsp; Billing</a>
+
+    <div class="nav-label team-label" id="team-nav-header">ADMINISTRATION</div>
+    <a class="nav" href="team.html" id="nav-team">♧ &nbsp; Team access</a>
+
+    <div class="sidebar-bottom">
+      <div class="user-chip">
+        <span class="avatar" id="user-avatar">A</span>
+        <span>
+          <b id="user-name">Dexter HiTech Admin</b>
+          <small id="user-role">Admin</small>
+        </span>
+      </div>
+      <a class="logout" href="account.html">My account · Password</a>
+      <a class="logout" href="login.html" onclick="Auth.logout()">Sign out ↗</a>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <span class="eyebrow">DEXTER HITECH / OPERATIONS</span>
+        <h1>Overview</h1>
+      </div>
+      <div class="top-actions">
+        <button class="export-btn" onclick="App.exportToExcel()">↓ &nbsp; Download Excel</button>
+        <span class="date-label" id="today-date">2026-11-10</span>
+      </div>
+    </header>
+
+    <div id="flash-message" class="flash"></div>
+
+    <section class="welcome-row">
+      <div>
+        <h2>Your operations, at a glance.</h2>
+        <p class="muted">A clear view of active client work and what needs attention.</p>
+      </div>
+      <a class="primary small-btn" href="clients.html">＋ Add client</a>
+    </section>
+
+    <div class="stats-grid">
+      <div class="stat-card">
+        <span>ACTIVE CLIENTS</span>
+        <strong id="stat-active-clients">0</strong>
+        <small>Currently active accounts</small>
+      </div>
+      <div class="stat-card">
+        <span>OPEN TASKS</span>
+        <strong id="stat-open-tasks">0</strong>
+        <small>Work still in progress</small>
+      </div>
+      <div class="stat-card">
+        <span>OPEN REQUESTS</span>
+        <strong id="stat-open-requests">0</strong>
+        <small>Client items to action</small>
+      </div>
+      <div class="stat-card alert-stat">
+        <span>OVERDUE INVOICES</span>
+        <strong id="stat-overdue-invoices">0</strong>
+        <small>Past due date · unpaid</small>
+      </div>
+    </div>
+
+    <div class="dashboard-grid">
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <h3>Upcoming work</h3>
+            <p>Tasks that still need attention</p>
+          </div>
+          <a href="tasks.html">View all →</a>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>TASK</th>
+                <th>CLIENT</th>
+                <th>OWNER</th>
+                <th>DUE DATE</th>
+                <th>STATUS</th>
+              </tr>
+            </thead>
+            <tbody id="dashboard-tasks-table">
+              <tr><td colspan="5" class="empty">No open tasks yet. Add your first task to get started.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <h3>Latest client requests</h3>
+            <p>Recently logged requests</p>
+          </div>
+          <a href="requests.html">View all →</a>
+        </div>
+        <div id="dashboard-recent-requests">
+          <div class="empty">No client requests logged yet.</div>
+        </div>
+      </section>
+    </div>
+
+    <footer>
+      DEXTER HITECH <span>CLIENT OPERATIONS WORKSPACE</span>
+    </footer>
+  </main>
+</body>
+</html>

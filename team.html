@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Team access | Dexter HiTech CRM</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+  <script src="firebase-config.js"></script>
+  <script src="app.js"></script>
+</head>
+<body>
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <a class="brand" href="index.html">
+      <span class="brand-mark">D</span>
+      <span>DEXTER <b>HITECH</b><small>CLIENT OPERATIONS</small></span>
+    </a>
+
+    <div class="nav-label">WORKSPACE</div>
+    <a class="nav" href="index.html" id="nav-dashboard">▦ &nbsp; Overview</a>
+    <a class="nav" href="clients.html" id="nav-clients">♙ &nbsp; Clients</a>
+    <a class="nav" href="tasks.html" id="nav-tasks">☷ &nbsp; Tasks & deadlines</a>
+    <a class="nav" href="requests.html" id="nav-requests">↗ &nbsp; Client requests</a>
+    <a class="nav" href="billing.html" id="nav-billing">▤ &nbsp; Billing</a>
+
+    <div class="nav-label team-label" id="team-nav-header">ADMINISTRATION</div>
+    <a class="nav" href="team.html" id="nav-team">♧ &nbsp; Team access</a>
+
+    <div class="sidebar-bottom">
+      <div class="user-chip">
+        <span class="avatar" id="user-avatar">A</span>
+        <span>
+          <b id="user-name">Dexter HiTech Admin</b>
+          <small id="user-role">Admin</small>
+        </span>
+      </div>
+      <a class="logout" href="account.html">My account · Password</a>
+      <a class="logout" href="login.html" onclick="Auth.logout()">Sign out ↗</a>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <span class="eyebrow">DEXTER HITECH / OPERATIONS</span>
+        <h1>Team access</h1>
+      </div>
+      <div class="top-actions">
+        <button class="export-btn" onclick="App.exportToExcel()">↓ &nbsp; Download Excel</button>
+        <span class="date-label" id="today-date">2026-11-10</span>
+      </div>
+    </header>
+
+    <div id="flash-message" class="flash"></div>
+
+    <div class="page-intro">
+      <p>Create individual sign-in accounts for your team. Only administrators can access this page.</p>
+    </div>
+
+    <!-- Create Team Form -->
+    <section class="panel form-panel">
+      <div class="panel-head">
+        <div>
+          <h3>Create team account</h3>
+          <p>Use a unique username and a strong temporary password.</p>
+        </div>
+      </div>
+      <form id="team-form" class="form-grid">
+        <label>Full name *
+          <input name="full_name" required placeholder="Alex Turner">
+        </label>
+        <label>Username *
+          <input name="username" required placeholder="alex">
+        </label>
+        <label>Temporary password *
+          <input type="password" name="password" minlength="8" required placeholder="Min 8 characters">
+        </label>
+        <label>Role
+          <select name="role">
+            <option value="Member">Member</option>
+            <option value="Admin">Admin</option>
+          </select>
+        </label>
+        <div class="form-submit">
+          <button type="submit" class="primary">Create account →</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Team Directory -->
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h3>Team directory</h3>
+          <p id="team-count">0 accounts</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>TEAM MEMBER</th>
+              <th>USERNAME</th>
+              <th>ACCESS ROLE</th>
+            </tr>
+          </thead>
+          <tbody id="team-table-body">
+            <tr><td colspan="3" class="empty">No team accounts yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer>
+      DEXTER HITECH <span>CLIENT OPERATIONS WORKSPACE</span>
+    </footer>
+  </main>
+</body>
+</html>

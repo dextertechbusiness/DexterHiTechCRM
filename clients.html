@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Clients | Dexter HiTech CRM</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+  <script src="firebase-config.js"></script>
+  <script src="app.js"></script>
+</head>
+<body>
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <a class="brand" href="index.html">
+      <span class="brand-mark">D</span>
+      <span>DEXTER <b>HITECH</b><small>CLIENT OPERATIONS</small></span>
+    </a>
+
+    <div class="nav-label">WORKSPACE</div>
+    <a class="nav" href="index.html" id="nav-dashboard">▦ &nbsp; Overview</a>
+    <a class="nav" href="clients.html" id="nav-clients">♙ &nbsp; Clients</a>
+    <a class="nav" href="tasks.html" id="nav-tasks">☷ &nbsp; Tasks & deadlines</a>
+    <a class="nav" href="requests.html" id="nav-requests">↗ &nbsp; Client requests</a>
+    <a class="nav" href="billing.html" id="nav-billing">▤ &nbsp; Billing</a>
+
+    <div class="nav-label team-label" id="team-nav-header">ADMINISTRATION</div>
+    <a class="nav" href="team.html" id="nav-team">♧ &nbsp; Team access</a>
+
+    <div class="sidebar-bottom">
+      <div class="user-chip">
+        <span class="avatar" id="user-avatar">A</span>
+        <span>
+          <b id="user-name">Dexter HiTech Admin</b>
+          <small id="user-role">Admin</small>
+        </span>
+      </div>
+      <a class="logout" href="account.html">My account · Password</a>
+      <a class="logout" href="login.html" onclick="Auth.logout()">Sign out ↗</a>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <span class="eyebrow">DEXTER HITECH / OPERATIONS</span>
+        <h1>Clients</h1>
+      </div>
+      <div class="top-actions">
+        <button class="export-btn" onclick="App.exportToExcel()">↓ &nbsp; Download Excel</button>
+        <span class="date-label" id="today-date">2026-11-10</span>
+      </div>
+    </header>
+
+    <div id="flash-message" class="flash"></div>
+
+    <div class="page-intro">
+      <p>Keep client details, services, ownership and monthly value in one place.</p>
+    </div>
+
+    <!-- Add Client Form -->
+    <section class="panel form-panel">
+      <div class="panel-head">
+        <div>
+          <h3>Add a client</h3>
+          <p>Create a client record and assign an owner.</p>
+        </div>
+      </div>
+      <form id="client-form" class="form-grid">
+        <label>Client / brand name *
+          <input name="name" required placeholder="Acme Media">
+        </label>
+        <label>Company / business
+          <input name="company" placeholder="Acme Ltd.">
+        </label>
+        <label>Contact person
+          <input name="contact_person" placeholder="John Doe">
+        </label>
+        <label>Phone
+          <input name="phone" placeholder="+91 98765 43210">
+        </label>
+        <label>Email
+          <input type="email" name="email" placeholder="client@acme.com">
+        </label>
+        <label>Service provided
+          <input name="service" placeholder="e.g. Social media management">
+        </label>
+        <label>Monthly fee (₹)
+          <input type="number" step="0.01" min="0" name="monthly_fee" placeholder="25000">
+        </label>
+        <label>Start date
+          <input type="date" name="start_date">
+        </label>
+        <label>Account owner
+          <select id="client-owner-select" name="owner_id">
+            <option value="">Unassigned</option>
+          </select>
+        </label>
+        <label>Status
+          <select name="status">
+            <option value="Active">Active</option>
+            <option value="On Hold">On Hold</option>
+            <option value="Completed">Completed</option>
+          </select>
+        </label>
+        <label class="span-two">Notes
+          <textarea name="notes" rows="2" placeholder="Key preferences, points of contact..."></textarea>
+        </label>
+        <div class="form-submit">
+          <button type="submit" class="primary">Save client →</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Client Directory -->
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h3>Client directory</h3>
+          <p id="clients-count">0 records</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>CLIENT</th>
+              <th>CONTACT</th>
+              <th>SERVICE</th>
+              <th>OWNER</th>
+              <th>MONTHLY FEE</th>
+              <th>STATUS</th>
+              <th>ACTION</th>
+            </tr>
+          </thead>
+          <tbody id="clients-table-body">
+            <tr><td colspan="7" class="empty">No clients added yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer>
+      DEXTER HITECH <span>CLIENT OPERATIONS WORKSPACE</span>
+    </footer>
+  </main>
+</body>
+</html>

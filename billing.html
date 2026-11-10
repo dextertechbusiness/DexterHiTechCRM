@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Billing & reports | Dexter HiTech CRM</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+  <script src="firebase-config.js"></script>
+  <script src="app.js"></script>
+</head>
+<body>
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <a class="brand" href="index.html">
+      <span class="brand-mark">D</span>
+      <span>DEXTER <b>HITECH</b><small>CLIENT OPERATIONS</small></span>
+    </a>
+
+    <div class="nav-label">WORKSPACE</div>
+    <a class="nav" href="index.html" id="nav-dashboard">▦ &nbsp; Overview</a>
+    <a class="nav" href="clients.html" id="nav-clients">♙ &nbsp; Clients</a>
+    <a class="nav" href="tasks.html" id="nav-tasks">☷ &nbsp; Tasks & deadlines</a>
+    <a class="nav" href="requests.html" id="nav-requests">↗ &nbsp; Client requests</a>
+    <a class="nav" href="billing.html" id="nav-billing">▤ &nbsp; Billing</a>
+
+    <div class="nav-label team-label" id="team-nav-header">ADMINISTRATION</div>
+    <a class="nav" href="team.html" id="nav-team">♧ &nbsp; Team access</a>
+
+    <div class="sidebar-bottom">
+      <div class="user-chip">
+        <span class="avatar" id="user-avatar">A</span>
+        <span>
+          <b id="user-name">Dexter HiTech Admin</b>
+          <small id="user-role">Admin</small>
+        </span>
+      </div>
+      <a class="logout" href="account.html">My account · Password</a>
+      <a class="logout" href="login.html" onclick="Auth.logout()">Sign out ↗</a>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <span class="eyebrow">DEXTER HITECH / OPERATIONS</span>
+        <h1>Billing & reports</h1>
+      </div>
+      <div class="top-actions">
+        <button class="export-btn" onclick="App.exportToExcel()">↓ &nbsp; Download Excel</button>
+        <span class="date-label" id="today-date">2026-11-10</span>
+      </div>
+    </header>
+
+    <div id="flash-message" class="flash"></div>
+
+    <div class="page-intro">
+      <p>Track monthly retainers, invoice dates, payment status and outstanding balances.</p>
+    </div>
+
+    <!-- Mini stats -->
+    <div class="mini-stats">
+      <div class="stat-card">
+        <span>PAYMENTS RECEIVED</span>
+        <strong id="billing-total-paid">₹0.00</strong>
+      </div>
+      <div class="stat-card">
+        <span>PAYMENTS PENDING</span>
+        <strong id="billing-total-pending">₹0.00</strong>
+      </div>
+    </div>
+
+    <!-- Add Billing Form -->
+    <section class="panel form-panel">
+      <div class="panel-head">
+        <div>
+          <h3>Add billing record</h3>
+          <p>Enter one record per client invoice and billing period.</p>
+        </div>
+      </div>
+      <form id="billing-form" class="form-grid">
+        <label>Client *
+          <select id="billing-client-select" name="client_id" required>
+            <option value="">Select client</option>
+          </select>
+        </label>
+        <label>Invoice number
+          <input name="invoice_no" placeholder="INV-2026-001">
+        </label>
+        <label>Billing month
+          <input name="billing_month" placeholder="November 2026">
+        </label>
+        <label>Amount (₹) *
+          <input type="number" step="0.01" min="0" name="amount" required placeholder="50000">
+        </label>
+        <label>Invoice date
+          <input type="date" name="invoice_date">
+        </label>
+        <label>Due date
+          <input type="date" name="due_date">
+        </label>
+        <label>Payment date
+          <input type="date" name="payment_date">
+        </label>
+        <label>Status
+          <select name="status">
+            <option value="Pending">Pending</option>
+            <option value="Paid">Paid</option>
+            <option value="Partially Paid">Partially Paid</option>
+            <option value="Overdue">Overdue</option>
+            <option value="Cancelled">Cancelled</option>
+          </select>
+        </label>
+        <label class="span-two">Notes
+          <input name="notes" placeholder="Payment method or transaction ID">
+        </label>
+        <div class="form-submit">
+          <button type="submit" class="primary">Save billing record →</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Invoice Register -->
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h3>Invoice register</h3>
+          <p id="billing-count">0 billing records</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>CLIENT / INVOICE</th>
+              <th>PERIOD</th>
+              <th>AMOUNT</th>
+              <th>INVOICE DATE</th>
+              <th>DUE DATE</th>
+              <th>PAYMENT</th>
+              <th>ACTION</th>
+            </tr>
+          </thead>
+          <tbody id="billing-table-body">
+            <tr><td colspan="7" class="empty">No billing records yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer>
+      DEXTER HITECH <span>CLIENT OPERATIONS WORKSPACE</span>
+    </footer>
+  </main>
+</body>
+</html>

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in | Dexter HiTech CRM</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+  <script src="firebase-config.js"></script>
+  <script src="app.js"></script>
+</head>
+<body>
+  <div class="login-wrap">
+    <div class="login-card">
+      <a class="brand login-brand" href="index.html">
+        <span class="brand-mark">D</span>
+        <span>DEXTER <b>HITECH</b><small>CLIENT OPERATIONS</small></span>
+      </a>
+      <div class="eyebrow">TEAM WORKSPACE</div>
+      <h1>Welcome back.</h1>
+      <p class="muted">Sign in to manage your client operations.</p>
+      
+      <form id="login-form" class="form-stack">
+        <label>Username
+          <input id="login-username" required autofocus placeholder="Your username" value="admin">
+        </label>
+        <label>Password
+          <input type="password" id="login-password" required placeholder="Your password" value="ChangeMe123!">
+        </label>
+        <button type="submit" class="primary full">Sign in <span>→</span></button>
+      </form>
+
+      <div id="login-error" class="flash error" style="display:none; margin-top:14px;"></div>
+      <small class="login-note">Authorised team members only.</small>
+    </div>
+
+    <div class="login-side">
+      <div class="side-orb"></div>
+      <span class="eyebrow">ONE WORKSPACE. EVERY CLIENT.</span>
+      <h2>Keep every detail<br>moving forward.</h2>
+      <p>Clients, delivery, requests and billing — organised in one place.</p>
+      <span class="side-footer">DEXTER HITECH · 2026</span>
+    </div>
+  </div>
+</body>
+</html>

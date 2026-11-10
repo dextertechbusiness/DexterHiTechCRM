@@ -21,6 +21,8 @@ const Auth = {
   init() {
     const currentPage = window.location.pathname.split('/').pop() || 'index.html';
     const isLoginPage = (currentPage === 'login.html');
+    const isPendingPage = (currentPage === 'pending.html');
+    const isAdminPage = (currentPage === 'admin.html');
 
     if (typeof fbAuth === 'undefined' || fbAuth === null) {
       console.warn("[Auth] Firebase Auth is not initialized. Check firebase-config.js.");
@@ -35,32 +37,43 @@ const Auth = {
         // 1. Sync or create user profile with approval status
         const userProfile = await this.syncUserProfile(firebaseUser);
 
-        // 2. Check Approval Status
+        // 2. Strict Check for Pending Approval
         if (userProfile.status === 'Pending') {
           console.warn("[Auth] Account approval is pending for:", userProfile.email);
-          if (isLoginPage) {
-            // Stay on login page and show pending notice
-            App.showPendingApprovalState(userProfile);
+          if (!isPendingPage) {
+            // Strictly redirect pending users to pending.html - zero dashboard access
+            window.location.replace('pending.html');
           } else {
-            // Show full-page approval required overlay
-            App.showApprovalPendingOverlay(userProfile);
+            // Render pending card with live poller
+            App.renderPendingPage(userProfile);
           }
           return;
         }
 
-        if (userProfile.status === 'Rejected') {
-          alert("Your access request was declined by the administrator. Please contact your workspace admin.");
+        // 3. Check for Suspended or Rejected Users
+        if (userProfile.status === 'Rejected' || userProfile.status === 'Suspended') {
+          alert("Your access to Dexter HiTech CRM has been suspended or declined by the administrator. Please contact your workspace administrator.");
           this.logout();
           return;
         }
 
-        // 3. User is Active & Approved!
-        if (isLoginPage) {
-          window.location.href = 'index.html';
+        // 4. User is Active & Approved!
+        if (isPendingPage || isLoginPage) {
+          // If approved user visits pending or login, direct to dashboard
+          window.location.replace('index.html');
           return;
         }
 
-        // Render authorized page
+        // 5. Admin Panel Access Control
+        if (isAdminPage) {
+          if (userProfile.role !== 'Admin') {
+            alert("Access Denied: Administrator privileges are required to access the Admin Panel.");
+            window.location.replace('index.html');
+            return;
+          }
+        }
+
+        // Render authorized workspace page
         App.onUserAuthenticated();
 
       } else {
@@ -82,6 +95,7 @@ const Auth = {
     const email = firebaseUser.email || '';
     const name = firebaseUser.displayName || (email ? email.split('@')[0] : 'Member');
     const photoURL = firebaseUser.photoURL || '';
+    const isGoogle = firebaseUser.providerData && firebaseUser.providerData.some(p => p.providerId === 'google.com');
 
     try {
       if (typeof fbDb !== 'undefined' && fbDb) {
@@ -91,32 +105,66 @@ const Auth = {
         if (snap.exists) {
           profile = { id: uid, ...snap.data() };
         } else {
-          // Brand new user registration
-          const allUsersSnap = await fbDb.collection('users').get();
-          const isFirstUser = (allUsersSnap.empty || allUsersSnap.size === 0);
-          
-          // First user or workspace owner is automatically Admin and Active
-          const isOwner = isFirstUser || (email.toLowerCase().includes('admin') || email.toLowerCase().includes('dextertech'));
-          const role = isOwner ? 'Admin' : 'Member';
-          const status = isOwner ? 'Active' : 'Pending';
+          // Check if user email was pre-authorized by an administrator
+          let preAuthDoc = null;
+          if (email) {
+            const preAuthSnap = await fbDb.collection('users').where('email', '==', email.toLowerCase().trim()).get();
+            if (!preAuthSnap.empty) {
+              preAuthDoc = preAuthSnap.docs[0];
+            }
+          }
 
-          profile = {
-            id: uid,
-            uid: uid,
-            email: email,
-            full_name: name,
-            photoURL: photoURL,
-            role: role,
-            status: status,
-            approved: isOwner,
-            created_at: new Date().toISOString()
-          };
+          if (preAuthDoc && preAuthDoc.data().approved) {
+            // Pre-authorized by Admin!
+            const preData = preAuthDoc.data();
+            profile = {
+              id: uid,
+              uid: uid,
+              email: email,
+              full_name: name || preData.full_name || 'Member',
+              photoURL: photoURL,
+              auth_provider: isGoogle ? 'google.com' : 'password',
+              role: preData.role || 'Member',
+              status: 'Active',
+              approved: true,
+              preauthorized: true,
+              created_at: preData.created_at || new Date().toISOString()
+            };
+            await docRef.set(profile);
 
-          await docRef.set(profile);
+            // Clean up temporary preauth entry if under a different doc ID
+            if (preAuthDoc.id !== uid) {
+              await fbDb.collection('users').doc(preAuthDoc.id).delete().catch(() => {});
+            }
+          } else {
+            // Brand new registration
+            const allUsersSnap = await fbDb.collection('users').get();
+            const isFirstUser = (allUsersSnap.empty || allUsersSnap.size === 0);
+            
+            // First user or workspace owner is automatically Admin and Active
+            const isOwner = isFirstUser || (email.toLowerCase().includes('admin') || email.toLowerCase().includes('dextertech'));
+            const role = isOwner ? 'Admin' : 'Member';
+            const status = isOwner ? 'Active' : 'Pending';
 
-          // If new user requires approval, trigger admin email notification!
-          if (status === 'Pending') {
-            this.notifyAdminNewUser(profile);
+            profile = {
+              id: uid,
+              uid: uid,
+              email: email,
+              full_name: name,
+              photoURL: photoURL,
+              auth_provider: isGoogle ? 'google.com' : 'password',
+              role: role,
+              status: status,
+              approved: isOwner,
+              created_at: new Date().toISOString()
+            };
+
+            await docRef.set(profile);
+
+            // If new user requires approval, trigger admin email notification!
+            if (status === 'Pending') {
+              this.notifyAdminNewUser(profile);
+            }
           }
         }
       }
@@ -212,7 +260,7 @@ const Auth = {
       const profile = await this.syncUserProfile(result.user);
 
       if (profile.status === 'Pending') {
-        App.showPendingApprovalState(profile);
+        window.location.href = 'pending.html';
       } else {
         window.location.href = 'index.html';
       }
@@ -399,16 +447,19 @@ const App = {
   // Update Pending Badges on Sidebar & Alert Banners
   updatePendingBadges() {
     const pending = State.users.filter(u => u.status === 'Pending');
-    const badge = document.getElementById('pending-nav-badge');
-    if (badge) {
+    
+    // Update all pending badges across navbar
+    const badges = document.querySelectorAll('#pending-nav-badge');
+    badges.forEach(badge => {
       if (pending.length > 0 && State.currentUser && State.currentUser.role === 'Admin') {
         badge.textContent = pending.length;
         badge.style.display = 'inline-block';
       } else {
         badge.style.display = 'none';
       }
-    }
+    });
 
+    // Overview banner
     const alertBanner = document.getElementById('admin-pending-alert');
     const alertText = document.getElementById('admin-pending-text');
     if (alertBanner && alertText) {
@@ -419,6 +470,16 @@ const App = {
         alertBanner.style.display = 'none';
       }
     }
+
+    // Admin Panel widgets
+    const kpiPending = document.getElementById('kpi-pending-count');
+    const tablePendingCount = document.getElementById('admin-pending-table-count');
+    const adminBannerText = document.getElementById('admin-banner-text');
+    const adminOverviewAlert = document.getElementById('admin-overview-alert');
+    if (kpiPending) kpiPending.textContent = pending.length;
+    if (tablePendingCount) tablePendingCount.textContent = pending.length;
+    if (adminBannerText) adminBannerText.textContent = `${pending.length} user(s) are currently waiting for your approval to enter the workspace.`;
+    if (adminOverviewAlert) adminOverviewAlert.style.display = pending.length > 0 ? 'flex' : 'none';
   },
 
   // Modal when domain is not authorized in Firebase Console
@@ -549,7 +610,8 @@ const App = {
       'tasks.html': 'nav-tasks',
       'requests.html': 'nav-requests',
       'billing.html': 'nav-billing',
-      'team.html': 'nav-team'
+      'team.html': 'nav-team',
+      'admin.html': 'nav-admin'
     };
 
     const activeId = navMap[path];
@@ -581,11 +643,16 @@ const App = {
     const role = document.getElementById('user-role');
     if (role) role.textContent = user.role || 'Member';
 
+    const isAdmin = (user.role === 'Admin');
+
+    const adminNav = document.getElementById('nav-admin');
+    if (adminNav) adminNav.style.display = isAdmin ? 'flex' : 'none';
+
     const teamNav = document.getElementById('nav-team');
-    if (teamNav) teamNav.style.display = user.role === 'Admin' ? 'flex' : 'none';
+    if (teamNav) teamNav.style.display = isAdmin ? 'flex' : 'none';
 
     const teamHeader = document.getElementById('team-nav-header');
-    if (teamHeader) teamHeader.style.display = user.role === 'Admin' ? 'block' : 'none';
+    if (teamHeader) teamHeader.style.display = isAdmin ? 'block' : 'none';
 
     const todayDate = document.getElementById('today-date');
     if (todayDate) todayDate.textContent = new Date().toISOString().split('T')[0];
@@ -619,6 +686,8 @@ const App = {
       this.renderTeam();
     } else if (path === 'account.html') {
       this.renderAccount();
+    } else if (path === 'admin.html') {
+      this.renderAdminPanel();
     }
   },
 
@@ -1111,6 +1180,406 @@ const App = {
   },
 
   // -------------------------------------------------------------------------
+  // Pending Approval View (pending.html)
+  // -------------------------------------------------------------------------
+  renderPendingPage(user) {
+    if (!user) return;
+    const nameEl = document.getElementById('pending-name');
+    const emailEl = document.getElementById('pending-email');
+    const avatarEl = document.getElementById('pending-avatar');
+    
+    if (nameEl) nameEl.textContent = user.full_name || 'Team Member';
+    if (emailEl) emailEl.textContent = user.email || '—';
+    if (avatarEl) {
+      const initial = (user.full_name || user.email || 'U').charAt(0).toUpperCase();
+      if (user.photoURL) {
+        avatarEl.style.backgroundImage = `url('${user.photoURL}')`;
+        avatarEl.textContent = '';
+      } else {
+        avatarEl.style.backgroundImage = 'none';
+        avatarEl.textContent = initial;
+      }
+    }
+
+    // Auto-poll approval status every 6 seconds live
+    if (!this._pendingPoller) {
+      this._pendingPoller = setInterval(async () => {
+        await this.checkPendingApprovalStatus(false);
+      }, 6000);
+    }
+  },
+
+  async checkPendingApprovalStatus(manual = false) {
+    const btn = document.getElementById('pending-refresh-btn');
+    const statusText = document.getElementById('pending-status-text');
+    if (manual && btn) {
+      btn.disabled = true;
+      btn.textContent = 'Checking status with Firebase...';
+    }
+
+    try {
+      if (typeof fbAuth !== 'undefined' && fbAuth.currentUser && typeof fbDb !== 'undefined' && fbDb) {
+        const uid = fbAuth.currentUser.uid;
+        const snap = await fbDb.collection('users').doc(uid).get();
+        if (snap.exists) {
+          const data = snap.data();
+          if (data.status === 'Active') {
+            if (statusText) statusText.textContent = '✓ Access approved! Redirecting to dashboard...';
+            if (this._pendingPoller) clearInterval(this._pendingPoller);
+            setTimeout(() => {
+              window.location.replace('index.html');
+            }, 600);
+            return;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("Status check note", e);
+    }
+
+    if (manual) {
+      setTimeout(() => {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = 'Check Status Now ↻';
+        }
+        alert("Your account is still awaiting administrator approval. You will receive an email as soon as your access is granted.");
+      }, 500);
+    }
+  },
+
+  // -------------------------------------------------------------------------
+  // Dedicated Admin Panel Controller (admin.html)
+  // -------------------------------------------------------------------------
+  _adminFilter: 'all',
+  _adminSearch: '',
+
+  setAdminUserFilter(filter, btn) {
+    this._adminFilter = filter;
+    document.querySelectorAll('.filter-tab-btn').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    this.renderAdminUsersTable();
+  },
+
+  filterAdminUsers() {
+    const input = document.getElementById('admin-user-search');
+    this._adminSearch = input ? input.value.toLowerCase().trim() : '';
+    this.renderAdminUsersTable();
+  },
+
+  async refreshAdminData() {
+    this.showFlash('Refreshing admin records from Cloud Firestore...', 'success');
+    await Storage.syncWithFirestore();
+    this.renderAdminPanel();
+  },
+
+  renderAdminPanel() {
+    const users = State.users || [];
+    const pendingUsers = users.filter(u => u.status === 'Pending');
+    const activeUsers = users.filter(u => u.status === 'Active');
+    const totalUsers = users.length;
+
+    // 1. KPI Counters
+    const kpiPending = document.getElementById('kpi-pending-count');
+    const kpiActive = document.getElementById('kpi-active-count');
+    const kpiTotal = document.getElementById('kpi-total-count');
+    const tablePendingCount = document.getElementById('admin-pending-table-count');
+
+    if (kpiPending) kpiPending.textContent = pendingUsers.length;
+    if (kpiActive) kpiActive.textContent = activeUsers.length;
+    if (kpiTotal) kpiTotal.textContent = totalUsers;
+    if (tablePendingCount) tablePendingCount.textContent = pendingUsers.length;
+
+    // 2. Alert Banner
+    const alertBanner = document.getElementById('admin-overview-alert');
+    const bannerText = document.getElementById('admin-banner-text');
+    if (alertBanner) {
+      if (pendingUsers.length > 0) {
+        if (bannerText) bannerText.textContent = `${pendingUsers.length} user(s) are currently waiting for your approval to enter the workspace.`;
+        alertBanner.style.display = 'flex';
+      } else {
+        alertBanner.style.display = 'none';
+      }
+    }
+
+    // 3. Render Pending Queue Table
+    const pendingTbody = document.getElementById('admin-pending-tbody');
+    if (pendingTbody) {
+      if (pendingUsers.length === 0) {
+        pendingTbody.innerHTML = `
+          <tr>
+            <td colspan="6" class="empty" style="padding:30px 20px; text-align:center; color:#15803d; background:rgba(220,252,231,0.25);">
+              ✨ <b>All caught up!</b> There are no pending access requests at this moment.
+            </td>
+          </tr>
+        `;
+      } else {
+        pendingTbody.innerHTML = pendingUsers.map(u => {
+          const initial = (u.full_name || u.email || 'U').charAt(0).toUpperCase();
+          const avatarStyle = u.photoURL ? `background-image:url('${escapeHtml(u.photoURL)}');` : '';
+          const isGoogle = u.photoURL || (u.auth_provider === 'google.com');
+          const dateStr = u.created_at ? new Date(u.created_at).toLocaleDateString() + ' ' + new Date(u.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'Recently';
+
+          return `
+            <tr>
+              <td>
+                <div style="display:flex; align-items:center; gap:10px;">
+                  <span class="avatar" style="${avatarStyle}">${u.photoURL ? '' : initial}</span>
+                  <div>
+                    <b>${escapeHtml(u.full_name || 'New Member')}</b>
+                    <small style="display:block; color:#94a3b8; font-family:monospace; font-size:10px;">ID: ${escapeHtml(u.id)}</small>
+                  </div>
+                </div>
+              </td>
+              <td><b>${escapeHtml(u.email || '—')}</b></td>
+              <td>
+                <span class="provider-badge">
+                  ${isGoogle ? '🌐 Google OAuth' : '✉️ Email & Password'}
+                </span>
+              </td>
+              <td><span style="font-size:12px; color:#475569;">${dateStr}</span></td>
+              <td>
+                <select id="role-select-${u.id}" style="padding:5px 8px; font-size:12px; border-radius:6px; border:1px solid #cbd5e1;">
+                  <option value="Member" selected>Member (Standard)</option>
+                  <option value="Admin">Admin (Full Control)</option>
+                </select>
+              </td>
+              <td style="text-align:right;">
+                <div class="action-btn-group">
+                  <button type="button" class="approve-btn" onclick="App.approvePendingUser('${u.id}')">✓ Approve & Unlock</button>
+                  <button type="button" class="reject-btn" onclick="App.rejectUser('${u.id}')">✕ Decline</button>
+                </div>
+              </td>
+            </tr>
+          `;
+        }).join('');
+      }
+    }
+
+    // 4. Render All Users Table
+    this.renderAdminUsersTable();
+
+    // 5. Render Security Audit Log
+    this.renderAdminAuditLog();
+  },
+
+  renderAdminUsersTable() {
+    const tbody = document.getElementById('admin-all-users-tbody');
+    const countEl = document.getElementById('admin-users-count');
+    if (!tbody) return;
+
+    let users = State.users || [];
+    
+    // Apply search filter
+    if (this._adminSearch) {
+      users = users.filter(u => 
+        (u.full_name && u.full_name.toLowerCase().includes(this._adminSearch)) ||
+        (u.email && u.email.toLowerCase().includes(this._adminSearch)) ||
+        (u.role && u.role.toLowerCase().includes(this._adminSearch))
+      );
+    }
+
+    // Apply status/role tab filter
+    if (this._adminFilter === 'Active') {
+      users = users.filter(u => u.status === 'Active');
+    } else if (this._adminFilter === 'Pending') {
+      users = users.filter(u => u.status === 'Pending');
+    } else if (this._adminFilter === 'Rejected') {
+      users = users.filter(u => u.status === 'Rejected' || u.status === 'Suspended');
+    } else if (this._adminFilter === 'Admin') {
+      users = users.filter(u => u.role === 'Admin');
+    }
+
+    if (countEl) {
+      countEl.textContent = `Showing ${users.length} registered account(s)`;
+    }
+
+    if (users.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="6" class="empty">No matching accounts found.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = users.map(u => {
+      const initial = (u.full_name || u.email || 'U').charAt(0).toUpperCase();
+      const avatarStyle = u.photoURL ? `background-image:url('${escapeHtml(u.photoURL)}');` : '';
+      const statusClass = (u.status || 'Active').toLowerCase();
+      const isPending = (u.status === 'Pending');
+      const isActive = (u.status === 'Active');
+      const isRejected = (u.status === 'Rejected' || u.status === 'Suspended');
+      const isCurrentUser = (State.currentUser && State.currentUser.id === u.id);
+
+      return `
+        <tr>
+          <td>
+            <div style="display:flex; align-items:center; gap:10px;">
+              <span class="avatar" style="${avatarStyle}">${u.photoURL ? '' : initial}</span>
+              <div>
+                <b>${escapeHtml(u.full_name || 'Member')}</b> ${isCurrentUser ? '<small style="color:#2563eb; font-weight:700;">(You)</small>' : ''}
+                <small style="display:block; color:#94a3b8; font-family:monospace; font-size:10px;">ID: ${escapeHtml(u.id)}</small>
+              </div>
+            </div>
+          </td>
+          <td>${escapeHtml(u.email || '—')}</td>
+          <td>
+            <span class="pill ${statusClass}">${escapeHtml(u.status || 'Active')}</span>
+          </td>
+          <td>
+            ${isCurrentUser ? `<b>${u.role || 'Admin'}</b>` : `
+              <select onchange="App.changeUserRole('${u.id}', this.value)" style="padding:4px 8px; font-size:12px; border-radius:6px; border:1px solid #cbd5e1;">
+                <option value="Member" ${u.role === 'Member' ? 'selected' : ''}>Member</option>
+                <option value="Admin" ${u.role === 'Admin' ? 'selected' : ''}>Admin</option>
+              </select>
+            `}
+          </td>
+          <td>
+            ${isActive ? `
+              <span class="access-badge granted">✓ Access Granted</span>
+            ` : `
+              <span class="access-badge blocked">✕ Access Blocked</span>
+            `}
+          </td>
+          <td style="text-align:right;">
+            <div class="action-btn-group">
+              ${isPending ? `
+                <button type="button" class="approve-btn" onclick="App.approvePendingUser('${u.id}')">Approve</button>
+              ` : ''}
+              ${isActive && !isCurrentUser ? `
+                <button type="button" class="suspend-btn" onclick="App.suspendUser('${u.id}')">Suspend</button>
+              ` : ''}
+              ${isRejected ? `
+                <button type="button" class="reactivate-btn" onclick="App.reactivateUser('${u.id}')">Re-activate</button>
+              ` : ''}
+              ${!isCurrentUser ? `
+                <button type="button" class="delete-icon-btn" onclick="App.deleteUserAccount('${u.id}')" title="Delete Account">🗑️</button>
+              ` : ''}
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  },
+
+  async approvePendingUser(userId) {
+    const roleSelect = document.getElementById(`role-select-${userId}`);
+    const assignedRole = roleSelect ? roleSelect.value : 'Member';
+    const user = State.users.find(u => u.id === userId);
+    const userEmail = user ? user.email : '';
+    const userName = user ? user.full_name : 'Team Member';
+
+    await Storage.updateItemField('users', userId, {
+      status: 'Active',
+      approved: true,
+      role: assignedRole,
+      approved_at: new Date().toISOString(),
+      approved_by: State.currentUser ? State.currentUser.email : 'Admin'
+    });
+
+    // Record audit event in Firestore
+    if (typeof fbDb !== 'undefined' && fbDb) {
+      await fbDb.collection('notifications').add({
+        type: 'user_approval_granted',
+        userId: userId,
+        userEmail: userEmail,
+        userName: userName,
+        assignedRole: assignedRole,
+        approvedBy: State.currentUser ? State.currentUser.email : 'Admin',
+        created_at: new Date().toISOString(),
+        status: 'completed'
+      }).catch(() => {});
+    }
+
+    // Send confirmation email to user
+    if (userEmail) {
+      fetch('https://formsubmit.co/ajax/' + encodeURIComponent(userEmail), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({
+          _subject: `[Dexter HiTech CRM] Your Dashboard Access Has Been Approved!`,
+          'Status': 'Access Granted',
+          'Role': assignedRole,
+          'Message': `Hello ${userName}, your access request for Dexter HiTech CRM has been approved by the administrator. You can now access the CRM dashboard at any time.`
+        })
+      }).catch(() => {});
+    }
+
+    this.showFlash(`User ${userEmail} approved with role ${assignedRole}. Dashboard access unlocked!`, 'success');
+    await Storage.syncWithFirestore();
+    this.renderAdminPanel();
+    this.updatePendingBadges();
+  },
+
+  async suspendUser(userId) {
+    if (!confirm('Are you sure you want to suspend this user? Their dashboard access will be immediately blocked.')) return;
+    await Storage.updateItemField('users', userId, {
+      status: 'Suspended',
+      approved: false,
+      suspended_at: new Date().toISOString()
+    });
+    this.showFlash('User access suspended. Dashboard access is now blocked.', 'error');
+    await Storage.syncWithFirestore();
+    this.renderAdminPanel();
+  },
+
+  async reactivateUser(userId) {
+    await Storage.updateItemField('users', userId, {
+      status: 'Active',
+      approved: true,
+      reactivated_at: new Date().toISOString()
+    });
+    this.showFlash('User reactivated. Dashboard access restored.', 'success');
+    await Storage.syncWithFirestore();
+    this.renderAdminPanel();
+  },
+
+  async changeUserRole(userId, newRole) {
+    await Storage.updateItemField('users', userId, { role: newRole });
+    this.showFlash(`User role updated to ${newRole}.`, 'success');
+    await Storage.syncWithFirestore();
+  },
+
+  async deleteUserAccount(userId) {
+    if (!confirm('Are you sure you want to delete this user profile? This action cannot be undone.')) return;
+    await Storage.deleteItem('users', userId);
+    this.showFlash('User profile deleted.', 'success');
+    await Storage.syncWithFirestore();
+    this.renderAdminPanel();
+    this.updatePendingBadges();
+  },
+
+  async renderAdminAuditLog() {
+    const tbody = document.getElementById('admin-audit-tbody');
+    if (!tbody) return;
+
+    try {
+      if (typeof fbDb !== 'undefined' && fbDb) {
+        const snap = await fbDb.collection('notifications').orderBy('created_at', 'desc').limit(8).get();
+        if (!snap.empty) {
+          const rows = [];
+          snap.forEach(doc => {
+            const d = doc.data();
+            const dateStr = d.created_at ? new Date(d.created_at).toLocaleString() : 'Recent';
+            rows.push(`
+              <tr>
+                <td><b>${escapeHtml(d.type || 'access_event')}</b></td>
+                <td>${escapeHtml(d.userName || d.userEmail || '—')}</td>
+                <td>${escapeHtml(d.approvedBy || d.adminEmail || 'System')}</td>
+                <td>${dateStr}</td>
+                <td><span class="pill ${d.status === 'pending' ? 'pending' : 'active'}">${escapeHtml(d.status || 'completed')}</span></td>
+              </tr>
+            `);
+          });
+          tbody.innerHTML = rows.join('');
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn("Audit log fetch note:", e);
+    }
+
+    tbody.innerHTML = `<tr><td colspan="5" class="empty">No security log events recorded yet.</td></tr>`;
+  },
+
+  // -------------------------------------------------------------------------
   // Excel Export
   // -------------------------------------------------------------------------
   exportToExcel() {
@@ -1173,8 +1642,13 @@ const App = {
 
         try {
           if (btn) { btn.disabled = true; btn.textContent = 'Signing in...'; }
-          await Auth.loginWithEmail(email, pass);
-          window.location.href = 'index.html';
+          const cred = await Auth.loginWithEmail(email, pass);
+          const profile = await Auth.syncUserProfile(cred.user);
+          if (profile && profile.status === 'Pending') {
+            window.location.replace('pending.html');
+          } else {
+            window.location.replace('index.html');
+          }
         } catch (err) {
           if (btn) { btn.disabled = false; btn.innerHTML = 'Sign in <span>→</span>'; }
           if (errEl) {
@@ -1218,8 +1692,7 @@ const App = {
           const userProfile = await Auth.signUpWithEmail(email, pass, name);
 
           if (userProfile && userProfile.status === 'Pending') {
-            App.showPendingApprovalState(userProfile);
-            if (btn) { btn.disabled = false; btn.innerHTML = 'Create account <span>→</span>'; }
+            window.location.href = 'pending.html';
           } else {
             window.location.href = 'index.html';
           }
@@ -1347,7 +1820,7 @@ const App = {
       teamForm.addEventListener('submit', async e => {
         e.preventDefault();
         const f = teamForm.elements;
-        const email = f.username.value.trim();
+        const email = f.username.value.trim().toLowerCase();
         const fullName = f.full_name.value.trim();
         const role = f.role.value || 'Member';
 
@@ -1357,13 +1830,42 @@ const App = {
           role: role,
           status: 'Active', // Pre-authorized by Admin
           approved: true,
+          preauthorized: true,
           created_at: new Date().toISOString()
         };
 
         await Storage.saveItem('users', newMember);
         teamForm.reset();
         App.showFlash(`Team member pre-approved: ${email}. They can now sign in with Google or Email.`, 'success');
-        Storage.syncWithFirestore();
+        await Storage.syncWithFirestore();
+      });
+    }
+
+    // 7b. Admin Panel Pre-authorization Form
+    const adminPreauthForm = document.getElementById('admin-preauth-form');
+    if (adminPreauthForm) {
+      adminPreauthForm.addEventListener('submit', async e => {
+        e.preventDefault();
+        const f = adminPreauthForm.elements;
+        const email = f.email.value.trim().toLowerCase();
+        const fullName = f.full_name.value.trim();
+        const role = f.role.value || 'Member';
+
+        const newPreMember = {
+          email: email,
+          full_name: fullName,
+          role: role,
+          status: 'Active', // Pre-authorized by Admin
+          approved: true,
+          preauthorized: true,
+          created_at: new Date().toISOString()
+        };
+
+        await Storage.saveItem('users', newPreMember);
+        adminPreauthForm.reset();
+        App.showFlash(`User ${email} pre-authorized with role ${role}. When they register, dashboard access will be unlocked instantly.`, 'success');
+        await Storage.syncWithFirestore();
+        App.renderAdminPanel();
       });
     }
 

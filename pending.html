@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Access Approval Pending | Dexter HiTech CRM</title>
+  <link rel="stylesheet" href="style.css">
+  
+  <!-- Firebase Compat CDN -->
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+  
+  <script src="firebase-config.js"></script>
+  <script src="app.js"></script>
+</head>
+<body class="pending-body">
+  <div class="pending-screen-wrap">
+    
+    <!-- Top Branding -->
+    <div class="pending-brand-header">
+      <a class="brand" href="login.html">
+        <span class="brand-mark">D</span>
+        <span>DEXTER <b>HITECH</b><small>CLIENT OPERATIONS</small></span>
+      </a>
+    </div>
+
+    <!-- Main Pending Card -->
+    <div class="pending-card">
+      <div class="pending-card-badge">
+        <div class="pending-icon-glow">⏳</div>
+      </div>
+      
+      <h2>Access Approval Required</h2>
+      <p class="pending-subtitle">
+        Your account registration has been submitted and is currently awaiting administrator authorization.
+      </p>
+
+      <!-- Account Info Preview -->
+      <div class="pending-user-box">
+        <div class="pending-user-avatar" id="pending-avatar">U</div>
+        <div class="pending-user-details">
+          <b id="pending-name">Team Member</b>
+          <span id="pending-email">user@company.com</span>
+        </div>
+        <div class="pending-status-chip">
+          <span class="pulse-dot amber"></span>
+          <span>Awaiting Admin</span>
+        </div>
+      </div>
+
+      <!-- Information Callout -->
+      <div class="pending-info-alert">
+        <div class="pending-info-icon">ℹ️</div>
+        <div>
+          <b>Dashboard Access Policy:</b>
+          <p>
+            For workspace security, newly registered accounts are locked out of the CRM dashboard until verified and approved by the system administrator.
+          </p>
+          <p style="margin-top:6px;">
+            An automated notification has been dispatched to the workspace admin. Once approved, you will receive an email and this screen will automatically refresh to unlock your dashboard.
+          </p>
+        </div>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="pending-card-actions">
+        <button type="button" class="primary full" id="pending-refresh-btn" onclick="App.checkPendingApprovalStatus(true)">
+          Check Status Now ↻
+        </button>
+        <button type="button" class="btn-secondary full" onclick="Auth.logout()">
+          Sign in with another account ↗
+        </button>
+      </div>
+
+      <!-- Live Polling Notice -->
+      <div class="pending-live-notice">
+        <span class="pulse-dot green"></span>
+        <span id="pending-status-text">Live status active: Automatically checking for admin approval...</span>
+      </div>
+
+    </div>
+
+    <!-- Footer Security Note -->
+    <div class="pending-footer">
+      <span>Dexter HiTech CRM &copy; 2026</span>
+      <span>•</span>
+      <span>Secured via Firebase Authentication & Cloud Firestore</span>
+    </div>
+
+  </div>
+</body>
+</html>

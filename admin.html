@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin Panel & Access Control | Dexter HiTech CRM</title>
+  <link rel="stylesheet" href="style.css">
+  
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+  <script src="firebase-config.js"></script>
+  <script src="app.js"></script>
+</head>
+<body>
+  <!-- Mobile Header -->
+  <div class="mobile-header">
+    <a class="brand" href="index.html">
+      <span class="brand-mark">D</span>
+      <span>DEXTER <b>HITECH</b></span>
+    </a>
+    <button type="button" class="mobile-toggle" id="mobile-menu-toggle" aria-label="Open Navigation">☰</button>
+  </div>
+  <div class="sidebar-overlay" id="sidebar-overlay"></div>
+
+  <!-- Sidebar Navigation -->
+  <aside class="sidebar">
+    <button type="button" class="sidebar-close-btn" id="sidebar-close-btn">✕</button>
+    <a class="brand" href="index.html">
+      <span class="brand-mark">D</span>
+      <span>DEXTER <b>HITECH</b><small>CLIENT OPERATIONS</small></span>
+    </a>
+
+    <div class="nav-label">WORKSPACE</div>
+    <a class="nav" href="index.html" id="nav-dashboard">▦ &nbsp; Overview</a>
+    <a class="nav" href="clients.html" id="nav-clients">♙ &nbsp; Clients</a>
+    <a class="nav" href="tasks.html" id="nav-tasks">☷ &nbsp; Tasks & deadlines</a>
+    <a class="nav" href="requests.html" id="nav-requests">↗ &nbsp; Client requests</a>
+    <a class="nav" href="billing.html" id="nav-billing">▤ &nbsp; Billing</a>
+
+    <div class="nav-label team-label" id="team-nav-header">ADMINISTRATION</div>
+    <a class="nav selected" href="admin.html" id="nav-admin">⚡ &nbsp; Admin Panel <span class="nav-badge" id="pending-nav-badge" style="display:none;">0</span></a>
+    <a class="nav" href="team.html" id="nav-team">♧ &nbsp; Team directory</a>
+
+    <div class="sidebar-bottom">
+      <div class="user-chip">
+        <span class="avatar" id="user-avatar">A</span>
+        <span>
+          <b id="user-name">Loading...</b>
+          <small id="user-role">Administrator</small>
+        </span>
+      </div>
+      <a class="logout" href="account.html">My account · Security</a>
+      <a class="logout" onclick="Auth.logout()">Sign out ↗</a>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <span class="eyebrow">DEXTER HITECH / SYSTEM ADMINISTRATION</span>
+        <h1>Admin Control Center</h1>
+      </div>
+      <div class="top-actions">
+        <button class="export-btn" onclick="App.refreshAdminData()">↻ &nbsp; Refresh Data</button>
+        <button class="export-btn" onclick="App.exportToExcel()">↓ &nbsp; Download Excel</button>
+        <span class="date-label" id="today-date">2026-11-10</span>
+      </div>
+    </header>
+
+    <div id="flash-message" class="flash"></div>
+
+    <!-- Admin Status Banner -->
+    <div id="admin-overview-alert" class="approval-alert-banner" style="display:none;">
+      <div>
+        <b>⚠️ Pending Access Requests:</b> <span id="admin-banner-text">0 users are currently waiting for your approval to enter the workspace.</span>
+      </div>
+      <a href="#admin-pending-queue" class="primary small-btn" style="text-decoration:none;">Jump to Approvals ↓</a>
+    </div>
+
+    <!-- Admin Stats Grid (4 KPI Cards) -->
+    <section class="admin-stats-grid">
+      <div class="admin-kpi-card highlight-amber">
+        <div class="kpi-icon-wrap">⏳</div>
+        <div>
+          <span class="kpi-label">PENDING APPROVALS</span>
+          <div class="kpi-number" id="kpi-pending-count">0</div>
+          <small class="kpi-subtext">Blocked from dashboard</small>
+        </div>
+      </div>
+
+      <div class="admin-kpi-card highlight-green">
+        <div class="kpi-icon-wrap">✓</div>
+        <div>
+          <span class="kpi-label">ACTIVE MEMBERS</span>
+          <div class="kpi-number" id="kpi-active-count">0</div>
+          <small class="kpi-subtext">Dashboard access granted</small>
+        </div>
+      </div>
+
+      <div class="admin-kpi-card">
+        <div class="kpi-icon-wrap">👥</div>
+        <div>
+          <span class="kpi-label">TOTAL ACCOUNTS</span>
+          <div class="kpi-number" id="kpi-total-count">0</div>
+          <small class="kpi-subtext">Registered user accounts</small>
+        </div>
+      </div>
+
+      <div class="admin-kpi-card">
+        <div class="kpi-icon-wrap">🛡️</div>
+        <div>
+          <span class="kpi-label">SECURITY GATE</span>
+          <div class="kpi-number" style="font-size:18px; color:#10b981; font-weight:800;">ACTIVE</div>
+          <small class="kpi-subtext">Admin review strictly enforced</small>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 1: Pending Approvals Queue -->
+    <section class="panel" id="admin-pending-queue" style="border: 1px solid #fde68a; background: rgba(254, 252, 232, 0.65);">
+      <div class="panel-head">
+        <div>
+          <h3 style="color:#b45309; display:flex; align-items:center; gap:8px;">
+            <span>⏳</span> Pending Dashboard Access Requests (<span id="admin-pending-table-count">0</span>)
+          </h3>
+          <p>
+            When a new user registers via Google or Email, they cannot access the dashboard until you approve them here. Click <b>Approve</b> to grant immediate access.
+          </p>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>APPLICANT</th>
+              <th>EMAIL ADDRESS</th>
+              <th>SIGN-IN PROVIDER</th>
+              <th>REQUESTED ON</th>
+              <th>ASSIGN ROLE</th>
+              <th style="text-align:right;">ACTION</th>
+            </tr>
+          </thead>
+          <tbody id="admin-pending-tbody">
+            <tr><td colspan="6" class="empty">Loading pending requests...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- SECTION 2: All Users Directory & Role Management -->
+    <section class="panel" id="admin-all-users">
+      <div class="panel-head">
+        <div>
+          <h3>All Registered Accounts & Access Management</h3>
+          <p id="admin-users-count">Manage roles, suspend access, or reactivate accounts.</p>
+        </div>
+      </div>
+
+      <!-- Filter and Search Bar -->
+      <div class="admin-filter-bar">
+        <div class="admin-search-wrap">
+          <input type="text" id="admin-user-search" placeholder="Search by name, email, or role..." oninput="App.filterAdminUsers()">
+        </div>
+        <div class="admin-filter-tabs">
+          <button type="button" class="filter-tab-btn active" data-filter="all" onclick="App.setAdminUserFilter('all', this)">All</button>
+          <button type="button" class="filter-tab-btn" data-filter="Active" onclick="App.setAdminUserFilter('Active', this)">Active</button>
+          <button type="button" class="filter-tab-btn" data-filter="Pending" onclick="App.setAdminUserFilter('Pending', this)">Pending</button>
+          <button type="button" class="filter-tab-btn" data-filter="Rejected" onclick="App.setAdminUserFilter('Rejected', this)">Rejected</button>
+          <button type="button" class="filter-tab-btn" data-filter="Admin" onclick="App.setAdminUserFilter('Admin', this)">Admins</button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>USER</th>
+              <th>EMAIL</th>
+              <th>STATUS</th>
+              <th>ROLE</th>
+              <th>DASHBOARD ACCESS</th>
+              <th style="text-align:right;">ACTIONS</th>
+            </tr>
+          </thead>
+          <tbody id="admin-all-users-tbody">
+            <tr><td colspan="6" class="empty">Loading users...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- SECTION 3: Pre-Authorize Team Member Form -->
+    <section class="panel form-panel" id="admin-preauth">
+      <div class="panel-head">
+        <div>
+          <h3>Pre-Authorize New Team Member</h3>
+          <p>
+            Add an email address here to pre-approve them in advance. When they register with this email (via Google or Email), they will bypass the pending queue and gain access immediately.
+          </p>
+        </div>
+      </div>
+      <form id="admin-preauth-form" class="form-grid">
+        <label>Full name *
+          <input name="full_name" required placeholder="Jane Doe">
+        </label>
+        <label>Email address *
+          <input name="email" type="email" required placeholder="jane@company.com">
+        </label>
+        <label>Access role
+          <select name="role">
+            <option value="Member">Member (Standard Access)</option>
+            <option value="Admin">Admin (Full Control)</option>
+          </select>
+        </label>
+        <div class="form-submit">
+          <button type="submit" class="primary">Pre-Authorize & Grant Access →</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- SECTION 4: Security Audit & Activity Log -->
+    <section class="panel" id="admin-audit-panel">
+      <div class="panel-head">
+        <div>
+          <h3>Security & Approval Activity Log</h3>
+          <p>Recent user approvals, registrations, and access events recorded in Cloud Firestore.</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>EVENT TYPE</th>
+              <th>TARGET USER</th>
+              <th>TRIGGERED BY</th>
+              <th>TIMESTAMP</th>
+              <th>STATUS</th>
+            </tr>
+          </thead>
+          <tbody id="admin-audit-tbody">
+            <tr><td colspan="5" class="empty">Loading activity log...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer>
+      DEXTER HITECH <span>CLIENT OPERATIONS WORKSPACE · ADMIN CONTROL</span>
+    </footer>
+  </main>
+</body>
+</html>

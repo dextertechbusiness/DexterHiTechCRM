@@ -140,9 +140,14 @@ const Auth = {
           // Check if user email was pre-authorized by Super Admin
           let preAuthDoc = null;
           if (email) {
-            const preAuthSnap = await fbDb.collection('users').where('email', '==', email).get();
-            if (!preAuthSnap.empty) {
-              preAuthDoc = preAuthSnap.docs[0];
+            try {
+              const preAuthSnap = await fbDb.collection('users').where('email', '==', email).get();
+              if (!preAuthSnap.empty) {
+                preAuthDoc = preAuthSnap.docs[0];
+              }
+            } catch (preAuthErr) {
+              // Not allowed to list users (security rules) -> treat as a normal new registration
+              console.warn('[Auth] Pre-authorization lookup skipped:', preAuthErr.code || preAuthErr.message);
             }
           }
 
@@ -198,7 +203,9 @@ const Auth = {
               created_at: new Date().toISOString()
             };
 
-            await docRef.set(cleanDataForFirestore(profile), { merge: true }).catch(() => {});
+            await docRef.set(cleanDataForFirestore(profile), { merge: true }).catch(err => {
+              console.error('[Auth] Could not save the access request to Firestore (check Firestore rules):', err.code, err.message);
+            });
 
             // Immediately register in local user state for instant visibility
             const curUsers = JSON.parse(localStorage.getItem('dexter_users') || '[]');
@@ -309,6 +316,16 @@ const Auth = {
     } catch (e) {
       console.warn("[Notify] Dispatch note:", e);
     }
+
+    // 3. Dispatch multi-tab broadcast for instant popup notification & real-time sync
+    try {
+      localStorage.setItem('dexter_latest_access_request', JSON.stringify({ user: newUser, timestamp: Date.now() }));
+      if (typeof BroadcastChannel !== 'undefined') {
+        const bc = new BroadcastChannel('dexter_crm_sync');
+        bc.postMessage({ type: 'NEW_REGISTRATION', user: newUser, timestamp: Date.now() });
+        bc.close();
+      }
+    } catch (e) {}
   },
 
   async loginWithEmail(email, password) {
@@ -567,6 +584,33 @@ const App = {
     this.setupMobileDrawer();
     this.renderCurrentPage(); // Instant 0ms initial render from local cache!
 
+    // Multi-tab real-time sync & popup listener
+    if (typeof BroadcastChannel !== 'undefined') {
+      try {
+        this._syncChannel = new BroadcastChannel('dexter_crm_sync');
+        this._syncChannel.onmessage = (event) => {
+          const data = event.data;
+          if (!data) return;
+          if (data.type === 'NEW_REGISTRATION' || data.type === 'USER_STATUS_PENDING') {
+            Storage.loadLocalData();
+            App.updatePendingBadges();
+            App.renderCurrentPage();
+            if (data.user) {
+              App.playNotificationSound();
+              App.showNewRequestPopup(data.user);
+            }
+          } else if (data.type === 'USER_APPROVED' || data.type === 'USER_REJECTED') {
+            Storage.loadLocalData();
+            App.updatePendingBadges();
+            App.renderCurrentPage();
+            if (App._activePopupUserId === data.userId) {
+              App.dismissRequestPopup();
+            }
+          }
+        };
+      } catch (e) {}
+    }
+
     // Start Authentication Watcher & Live Users Sync
     Auth.init();
     this.initLiveUsersListener();
@@ -576,6 +620,7 @@ const App = {
     this.updateUserChip();
     this.renderCurrentPage();
     this.initLiveUsersListener();
+    this.checkAndTriggerPendingPopups();
 
     // Sync cloud data in background
     Storage.syncWithFirestore();
@@ -603,6 +648,7 @@ const App = {
           State.pendingUsers = merged.filter(u => u.status === 'Pending');
 
           App.updatePendingBadges();
+          App.checkAndTriggerPendingPopups();
 
           const path = window.location.pathname.split('/').pop() || 'index.html';
           if (path === 'index.html' || path === 'dashboard.html' || path === '') {
@@ -988,6 +1034,7 @@ const App = {
     this.renderDashboardPendingRequests();
 
     this.updatePendingBadges();
+    this.checkAndTriggerPendingPopups();
   },
 
   renderDashboardPendingRequests() {
@@ -1069,59 +1116,8 @@ const App = {
   async approveDashboardUser(userId) {
     const roleSelect = document.getElementById(`dash-role-select-${userId}`);
     const assignedRole = roleSelect ? roleSelect.value : 'Member';
-    const user = (State.users || []).find(u => u.id === userId);
-    const userEmail = user ? user.email : '';
-    const userName = user ? user.full_name : 'Team Member';
-
-    // 1. Update user profile to Active in Firestore and LocalStorage
-    await Storage.updateItemField('users', userId, {
-      status: 'Active',
-      approved: true,
-      role: assignedRole,
-      approved_at: new Date().toISOString(),
-      approved_by: SUPER_ADMIN_EMAIL
-    });
-
-    // 2. Record approval in Firestore notifications
-    if (typeof fbDb !== 'undefined' && fbDb) {
-      await fbDb.collection('notifications').add(cleanDataForFirestore({
-        type: 'user_approval_granted',
-        userId: userId,
-        userEmail: userEmail,
-        userName: userName,
-        assignedRole: assignedRole,
-        approvedBy: SUPER_ADMIN_EMAIL,
-        created_at: new Date().toISOString(),
-        status: 'completed'
-      })).catch(() => {});
-    }
-
-    // 3. Send automated confirmation email to applicant via FormSubmit
-    if (userEmail) {
-      const origin = window.location.origin || '';
-      const path = window.location.pathname.replace(/[^\/]*$/, '');
-      const dashboardUrl = `${origin}${path}index.html`;
-
-      fetch('https://formsubmit.co/ajax/' + encodeURIComponent(userEmail), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-        body: JSON.stringify({
-          _subject: `[Dexter HiTech CRM] Your Dashboard Access Has Been Approved!`,
-          _template: 'table',
-          _captcha: 'false',
-          'Status': 'Access Granted (Approved)',
-          'Role Assigned': assignedRole,
-          'Approved By': SUPER_ADMIN_EMAIL,
-          'Message': `Hello ${userName}, your access request for Dexter HiTech CRM has been approved. You now have full access to the dashboard.`,
-          'Dashboard Link': dashboardUrl
-        })
-      }).catch(() => {});
-    }
-
-    this.showFlash(`User ${userEmail} approved with role ${assignedRole}! Dashboard access granted.`, 'success');
-    await Storage.syncWithFirestore();
+    await this.approvePendingUser(userId, assignedRole);
     this.renderDashboard();
-    this.updatePendingBadges();
   },
 
   createTestAccessRequest() {
@@ -1150,9 +1146,21 @@ const App = {
       fbDb.collection('users').doc(testUser.id).set(cleanDataForFirestore(testUser), { merge: true }).catch(() => {});
     }
 
-    this.showFlash(`Sample access request created for ${testEmail}. You can now click "✓ Approve Access"!`, 'success');
+    try {
+      localStorage.setItem('dexter_latest_access_request', JSON.stringify({ user: testUser, timestamp: Date.now() }));
+      if (typeof BroadcastChannel !== 'undefined') {
+        const bc = new BroadcastChannel('dexter_crm_sync');
+        bc.postMessage({ type: 'NEW_REGISTRATION', user: testUser, timestamp: Date.now() });
+        bc.close();
+      }
+    } catch (e) {}
+
+    this.showFlash(`Sample access request created for ${testEmail}. Popup opened!`, 'success');
     this.renderDashboardPendingRequests();
+    this.renderAdminPanel();
     this.updatePendingBadges();
+    this.playNotificationSound();
+    this.showNewRequestPopup(testUser);
   },
 
   // -------------------------------------------------------------------------
@@ -1531,8 +1539,24 @@ const App = {
       approved: false,
       rejected_at: new Date().toISOString()
     });
+
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        const bc = new BroadcastChannel('dexter_crm_sync');
+        bc.postMessage({ type: 'USER_REJECTED', userId: userId, timestamp: Date.now() });
+        bc.close();
+      }
+    } catch (e) {}
+
+    if (this._activePopupUserId === userId) {
+      this.dismissRequestPopup();
+    }
+
     this.showFlash('Access request declined.', 'error');
-    Storage.syncWithFirestore();
+    await Storage.syncWithFirestore();
+    this.renderAdminPanel();
+    this.renderDashboardPendingRequests();
+    this.updatePendingBadges();
   },
 
   async toggleUserRole(userId, newRole) {
@@ -1699,6 +1723,7 @@ const App = {
             localStorage.setItem('dexter_users', JSON.stringify(cloudUsers));
             this.updatePendingBadges();
             this.renderAdminUsersTable();
+            this.checkAndTriggerPendingPopups();
           }
         }, err => console.warn("Admin realtime note:", err));
       } catch (e) {}
@@ -1794,6 +1819,9 @@ const App = {
 
     // 5. Render Security Audit Log
     this.renderAdminAuditLog();
+
+    // 6. Check for Pending Access Request Popups
+    this.checkAndTriggerPendingPopups();
   },
 
   renderAdminUsersTable() {
@@ -1877,6 +1905,7 @@ const App = {
                 <button type="button" class="approve-btn" onclick="App.approvePendingUser('${u.id}')">Approve</button>
               ` : ''}
               ${isActive && !isCurrentUser ? `
+                <button type="button" class="suspend-btn" style="background:#fef3c7; color:#92400e; border:1px solid #fde68a; font-weight:600;" onclick="App.setUserPending('${u.id}')" title="Set user status to Pending to test approval flow & popup">Mark Pending ⏳</button>
                 <button type="button" class="suspend-btn" onclick="App.suspendUser('${u.id}')">Suspend</button>
               ` : ''}
               ${isRejected ? `
@@ -1892,9 +1921,9 @@ const App = {
     }).join('');
   },
 
-  async approvePendingUser(userId) {
+  async approvePendingUser(userId, overrideRole) {
     const roleSelect = document.getElementById(`role-select-${userId}`);
-    const assignedRole = roleSelect ? roleSelect.value : 'Member';
+    const assignedRole = overrideRole || (roleSelect ? roleSelect.value : 'Member');
     const user = State.users.find(u => u.id === userId);
     const userEmail = user ? user.email : '';
     const userName = user ? user.full_name : 'Team Member';
@@ -1944,9 +1973,23 @@ const App = {
       }).catch(() => {});
     }
 
+    // 4. Multi-tab broadcast
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        const bc = new BroadcastChannel('dexter_crm_sync');
+        bc.postMessage({ type: 'USER_APPROVED', userId: userId, timestamp: Date.now() });
+        bc.close();
+      }
+    } catch (e) {}
+
+    if (this._activePopupUserId === userId) {
+      this.dismissRequestPopup();
+    }
+
     this.showFlash(`User ${userEmail} approved with role ${assignedRole}! Dashboard access granted.`, 'success');
     await Storage.syncWithFirestore();
     this.renderAdminPanel();
+    this.renderDashboardPendingRequests();
     this.updatePendingBadges();
   },
 
@@ -2019,6 +2062,217 @@ const App = {
     }
 
     tbody.innerHTML = `<tr><td colspan="5" class="empty">No security log events recorded yet.</td></tr>`;
+  },
+
+  // -------------------------------------------------------------------------
+  // Real-Time Access Request Popup & Audio Alerts
+  // -------------------------------------------------------------------------
+  playNotificationSound() {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      if (ctx.state === 'suspended') {
+        ctx.resume();
+      }
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5 tone
+      osc.frequency.setValueAtTime(880, ctx.currentTime + 0.12); // A5 tone
+      gain.gain.setValueAtTime(0.25, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.45);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.45);
+    } catch (e) {
+      // Audio autoplay restrictions before first user gesture
+    }
+  },
+
+  ensureRequestPopupContainer() {
+    let overlay = document.getElementById('new-request-popup-overlay');
+    if (overlay) return overlay;
+
+    overlay = document.createElement('div');
+    overlay.id = 'new-request-popup-overlay';
+    overlay.className = 'modal-overlay';
+    overlay.style.cssText = 'display:none; position:fixed; inset:0; z-index:99999; background:rgba(15, 23, 42, 0.7); backdrop-filter:blur(8px); align-items:center; justify-content:center; padding:20px;';
+
+    overlay.innerHTML = `
+      <div class="modal-card" style="max-width:520px; width:100%; background:#ffffff; border-radius:20px; box-shadow:0 30px 80px rgba(0,0,0,0.35); border:2px solid #3b82f6; padding:26px; animation:modalFadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1); position:relative;">
+        <div style="display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:18px;">
+          <div style="display:flex; align-items:center; gap:12px;">
+            <div style="width:46px; height:46px; border-radius:14px; background:#eff6ff; color:#2563eb; display:flex; align-items:center; justify-content:center; font-size:22px; flex-shrink:0; box-shadow:0 4px 12px rgba(37,99,235,0.15);">
+              🔔
+            </div>
+            <div>
+              <h3 style="margin:0; font-size:18px; font-weight:800; color:#0f172a; font-family:Manrope,sans-serif;">New Access Request!</h3>
+              <p style="margin:2px 0 0; font-size:12px; color:#64748b;">A user has registered and is waiting for your approval.</p>
+            </div>
+          </div>
+          <button type="button" class="close-btn" onclick="App.dismissRequestPopup()" title="Dismiss popup" style="background:#f1f5f9; color:#64748b; border:none; width:32px; height:32px; border-radius:8px; font-size:16px; font-weight:700; cursor:pointer;">✕</button>
+        </div>
+
+        <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:14px; padding:16px; margin-bottom:20px;">
+          <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
+            <span id="popup-user-avatar" class="avatar" style="width:42px; height:42px; font-size:16px; border-radius:50%; background:#0f172a; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; flex-shrink:0;">U</span>
+            <div style="flex:1; min-width:0;">
+              <div id="popup-user-name" style="font-weight:700; font-size:15px; color:#0f172a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">User Name</div>
+              <div id="popup-user-email" style="font-size:12px; color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">user@example.com</div>
+            </div>
+            <span id="popup-auth-provider" class="pill" style="font-size:11px; background:#e0f2fe; color:#0369a1; border:1px solid #bae6fd; white-space:nowrap;">Google OAuth</span>
+          </div>
+          <div style="display:flex; align-items:center; justify-content:space-between; font-size:11px; color:#94a3b8; border-top:1px dashed #cbd5e1; padding-top:10px;">
+            <span>Status: <b style="color:#d97706;">⏳ Pending Admin Approval</b></span>
+            <span id="popup-request-time">Just now</span>
+          </div>
+        </div>
+
+        <div style="margin-bottom:22px;">
+          <label style="display:block; font-size:12px; font-weight:700; color:#334155; margin-bottom:6px;">Assign Workspace Role:</label>
+          <select id="popup-role-select" style="width:100%; padding:10px 14px; border:1px solid #cbd5e1; border-radius:10px; font-size:13px; font-weight:600; background:#fff; outline:none; color:#0f172a;">
+            <option value="Member" selected>Member (Standard Dashboard Access: Clients, Tasks, Deadlines, Requests, Billing)</option>
+            <option value="Admin">Admin (Full Administrative & Access Control Privileges)</option>
+          </select>
+        </div>
+
+        <div style="display:flex; align-items:center; justify-content:flex-end; gap:10px;">
+          <button type="button" class="btn-secondary" onclick="App.rejectUserFromPopup()" style="padding:10px 18px; font-size:13px; font-weight:700; color:#ef4444; border:1px solid #fca5a5; background:#fff; border-radius:10px; cursor:pointer;">
+            ✕ Decline
+          </button>
+          <button type="button" class="btn-primary" onclick="App.approveUserFromPopup()" style="padding:10px 22px; font-size:13px; font-weight:700; background:#10b981; border:1px solid #10b981; color:#ffffff; border-radius:10px; cursor:pointer; box-shadow:0 4px 14px rgba(16,185,129,0.3);">
+            ✓ Approve Access Now →
+          </button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(overlay);
+    return overlay;
+  },
+
+  showNewRequestPopup(user) {
+    if (!user) return;
+    this.ensureRequestPopupContainer();
+    this._activePopupUserId = user.id;
+
+    const nameEl = document.getElementById('popup-user-name');
+    const emailEl = document.getElementById('popup-user-email');
+    const avatarEl = document.getElementById('popup-user-avatar');
+    const providerEl = document.getElementById('popup-auth-provider');
+    const timeEl = document.getElementById('popup-request-time');
+    const roleSelect = document.getElementById('popup-role-select');
+
+    if (nameEl) nameEl.textContent = user.full_name || 'New Applicant';
+    if (emailEl) emailEl.textContent = user.email || '—';
+    if (avatarEl) {
+      if (user.photoURL) {
+        avatarEl.style.backgroundImage = `url('${escapeHtml(user.photoURL)}')`;
+        avatarEl.textContent = '';
+      } else {
+        avatarEl.style.backgroundImage = '';
+        avatarEl.textContent = (user.full_name || user.email || 'U').charAt(0).toUpperCase();
+      }
+    }
+    if (providerEl) {
+      providerEl.textContent = (user.auth_provider === 'google.com' || user.photoURL) ? 'Google OAuth' : 'Email/Password';
+    }
+    if (timeEl) {
+      timeEl.textContent = user.created_at ? new Date(user.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'Just now';
+    }
+    if (roleSelect) {
+      roleSelect.value = user.role || 'Member';
+    }
+
+    const overlay = document.getElementById('new-request-popup-overlay');
+    if (overlay) {
+      overlay.style.display = 'flex';
+    }
+  },
+
+  dismissRequestPopup() {
+    const overlay = document.getElementById('new-request-popup-overlay');
+    if (overlay) overlay.style.display = 'none';
+    if (this._activePopupUserId) {
+      if (!this._dismissedPopupUserIds) this._dismissedPopupUserIds = new Set();
+      this._dismissedPopupUserIds.add(this._activePopupUserId);
+    }
+  },
+
+  async approveUserFromPopup() {
+    if (!this._activePopupUserId) return;
+    const roleSelect = document.getElementById('popup-role-select');
+    const role = roleSelect ? roleSelect.value : 'Member';
+    const userId = this._activePopupUserId;
+    this.dismissRequestPopup();
+    await this.approvePendingUser(userId, role);
+  },
+
+  async rejectUserFromPopup() {
+    if (!this._activePopupUserId) return;
+    const userId = this._activePopupUserId;
+    this.dismissRequestPopup();
+    await this.rejectUser(userId);
+  },
+
+  checkAndTriggerPendingPopups() {
+    const isSuperAdmin = State.currentUser && (
+      (State.currentUser.email || '').toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() ||
+      State.currentUser.role === 'Admin'
+    );
+    if (!isSuperAdmin) return;
+
+    if (!this._shownPopupUserIds) {
+      this._shownPopupUserIds = new Set();
+    }
+    if (!this._dismissedPopupUserIds) {
+      this._dismissedPopupUserIds = new Set();
+    }
+
+    const pending = (State.users || []).filter(u => u.status === 'Pending');
+    if (pending.length === 0) return;
+
+    const candidate = pending.find(u => !this._shownPopupUserIds.has(u.id) && !this._dismissedPopupUserIds.has(u.id));
+    if (candidate) {
+      this._shownPopupUserIds.add(candidate.id);
+      this.playNotificationSound();
+      this.showNewRequestPopup(candidate);
+    }
+  },
+
+  async setUserPending(userId) {
+    const user = (State.users || []).find(u => u.id === userId);
+    if (!user) return;
+
+    user.status = 'Pending';
+    user.approved = false;
+    user.role = user.role || 'Member';
+    localStorage.setItem('dexter_users', JSON.stringify(State.users));
+    State.pendingUsers = (State.users || []).filter(u => u.status === 'Pending');
+
+    if (typeof fbDb !== 'undefined' && fbDb) {
+      fbDb.collection('users').doc(userId).set({
+        status: 'Pending',
+        approved: false
+      }, { merge: true }).catch(() => {});
+    }
+
+    try {
+      localStorage.setItem('dexter_latest_access_request', JSON.stringify({ user: user, timestamp: Date.now() }));
+      if (typeof BroadcastChannel !== 'undefined') {
+        const bc = new BroadcastChannel('dexter_crm_sync');
+        bc.postMessage({ type: 'USER_STATUS_PENDING', user: user, timestamp: Date.now() });
+        bc.close();
+      }
+    } catch (e) {}
+
+    this.renderAdminPanel();
+    this.updatePendingBadges();
+    this.playNotificationSound();
+    this.showNewRequestPopup(user);
+    this.showFlash(`User ${user.email} marked as Pending! Notification popup triggered.`, 'success');
   },
 
   // -------------------------------------------------------------------------
@@ -2474,9 +2728,21 @@ window.addEventListener('DOMContentLoaded', () => {
 
 // Multi-Tab Real-time Synchronizer (Syncs between open tabs instantly)
 window.addEventListener('storage', (e) => {
-  if (['dexter_users', 'dexter_clients', 'dexter_tasks', 'dexter_requests', 'dexter_billing'].includes(e.key)) {
+  if (e.key === 'dexter_latest_access_request') {
+    try {
+      const data = JSON.parse(e.newValue || '{}');
+      if (data && data.user) {
+        Storage.loadLocalData();
+        App.updatePendingBadges();
+        App.renderCurrentPage();
+        App.playNotificationSound();
+        App.showNewRequestPopup(data.user);
+      }
+    } catch (err) {}
+  } else if (['dexter_users', 'dexter_clients', 'dexter_tasks', 'dexter_requests', 'dexter_billing'].includes(e.key)) {
     Storage.loadLocalData();
     App.updatePendingBadges();
     App.renderCurrentPage();
+    App.checkAndTriggerPendingPopups();
   }
 });

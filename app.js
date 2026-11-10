@@ -200,6 +200,17 @@ const Auth = {
 
             await docRef.set(cleanDataForFirestore(profile), { merge: true }).catch(() => {});
 
+            // Immediately register in local user state for instant visibility
+            const curUsers = JSON.parse(localStorage.getItem('dexter_users') || '[]');
+            const existingIdx = curUsers.findIndex(u => u.id === uid || u.email === email);
+            if (existingIdx >= 0) {
+              curUsers[existingIdx] = profile;
+            } else {
+              curUsers.unshift(profile);
+            }
+            State.users = curUsers;
+            localStorage.setItem('dexter_users', JSON.stringify(curUsers));
+
             // DISPATCH INSTANT NOTIFICATION TO ARYAN SHINDE!
             this.notifyAdminNewUser(profile);
           }
@@ -494,17 +505,14 @@ const Storage = {
     }
     State[colName] = list;
 
-    // 2. Immediately persist to LocalStorage (Instant 0ms durability)
+    // 2. Immediately persist to LocalStorage (Instant 0ms local durability)
     localStorage.setItem('dexter_' + colName, JSON.stringify(list));
 
-    // 3. Persist to Cloud Firestore with error protection
+    // 3. Persist to Cloud Firestore in background (Non-blocking)
     if (this.isCloud()) {
-      try {
-        await fbDb.collection(colName).doc(cleanItem.id).set(cleanItem, { merge: true });
-        console.log(`[Firebase] Saved ${colName}/${cleanItem.id} to Firestore.`);
-      } catch (err) {
-        console.warn(`[Firebase] Firestore write note for ${colName}:`, err.message);
-      }
+      fbDb.collection(colName).doc(cleanItem.id).set(cleanItem, { merge: true })
+        .then(() => console.log(`[Firebase] Saved ${colName}/${cleanItem.id} to Firestore.`))
+        .catch(err => console.warn(`[Firebase] Firestore write note for ${colName}:`, err.message));
     }
     return cleanItem;
   },
@@ -519,12 +527,10 @@ const Storage = {
       localStorage.setItem('dexter_' + colName, JSON.stringify(list));
     }
     if (this.isCloud()) {
-      try {
-        await fbDb.collection(colName).doc(id).set(cleanFields, { merge: true });
-      } catch (err) {
-        console.warn(`[Firebase] Firestore update note:`, err.message);
-      }
+      fbDb.collection(colName).doc(id).set(cleanFields, { merge: true })
+        .catch(err => console.warn(`[Firebase] Firestore update note:`, err.message));
     }
+    return item;
   },
 
   async deleteItem(colName, id) {
@@ -532,11 +538,8 @@ const Storage = {
     localStorage.setItem('dexter_' + colName, JSON.stringify(State[colName]));
 
     if (this.isCloud()) {
-      try {
-        await fbDb.collection(colName).doc(id).delete();
-      } catch (err) {
-        console.warn(`[Firebase] Firestore delete note:`, err.message);
-      }
+      fbDb.collection(colName).doc(id).delete()
+        .catch(err => console.warn(`[Firebase] Firestore delete note:`, err.message));
     }
   }
 };
@@ -550,27 +553,74 @@ const App = {
     this.highlightActiveNav();
     this.bindEvents();
     this.setupMobileDrawer();
+    this.renderCurrentPage(); // Instant 0ms initial render from local cache!
 
-    // Start Authentication Watcher
+    // Start Authentication Watcher & Live Users Sync
     Auth.init();
+    this.initLiveUsersListener();
   },
 
   onUserAuthenticated() {
     this.updateUserChip();
     this.renderCurrentPage();
+    this.initLiveUsersListener();
 
     // Sync cloud data in background
     Storage.syncWithFirestore();
   },
 
+  initLiveUsersListener() {
+    if (typeof fbDb === 'undefined' || !fbDb || this._liveUsersListenerAttached) return;
+    this._liveUsersListenerAttached = true;
+
+    try {
+      fbDb.collection('users').onSnapshot(snap => {
+        const cloudUsers = [];
+        snap.forEach(doc => {
+          cloudUsers.push({ id: doc.id, ...doc.data() });
+        });
+
+        if (cloudUsers.length > 0) {
+          const userMap = new Map();
+          (State.users || []).forEach(u => userMap.set(u.id, u));
+          cloudUsers.forEach(u => userMap.set(u.id, u));
+          const merged = Array.from(userMap.values());
+
+          State.users = merged;
+          localStorage.setItem('dexter_users', JSON.stringify(merged));
+          State.pendingUsers = merged.filter(u => u.status === 'Pending');
+
+          App.updatePendingBadges();
+
+          const path = window.location.pathname.split('/').pop() || 'index.html';
+          if (path === 'index.html' || path === 'dashboard.html' || path === '') {
+            App.renderDashboardPendingRequests();
+          } else if (path === 'admin.html') {
+            App.renderAdminPanel();
+          } else if (path === 'team.html') {
+            App.renderTeam();
+          }
+        }
+      }, err => {
+        console.warn("[Firebase] Live users listener note:", err.message);
+      });
+    } catch (e) {
+      console.warn("[Firebase] Could not attach live users listener:", e);
+    }
+  },
+
   // Update Pending Badges on Sidebar & Alert Banners
   updatePendingBadges() {
-    const pending = State.users.filter(u => u.status === 'Pending');
+    const pending = (State.users || []).filter(u => u.status === 'Pending');
+    const isSuperAdmin = State.currentUser && (
+      (State.currentUser.email || '').toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() ||
+      State.currentUser.role === 'Admin'
+    );
     
     // Update all pending badges across navbar
     const badges = document.querySelectorAll('#pending-nav-badge');
     badges.forEach(badge => {
-      if (pending.length > 0 && State.currentUser && State.currentUser.role === 'Admin') {
+      if (pending.length > 0 && isSuperAdmin) {
         badge.textContent = pending.length;
         badge.style.display = 'inline-block';
       } else {
@@ -582,13 +632,17 @@ const App = {
     const alertBanner = document.getElementById('admin-pending-alert');
     const alertText = document.getElementById('admin-pending-text');
     if (alertBanner && alertText) {
-      if (pending.length > 0 && State.currentUser && State.currentUser.role === 'Admin') {
+      if (pending.length > 0 && isSuperAdmin) {
         alertText.textContent = `${pending.length} team member(s) waiting for access approval.`;
         alertBanner.style.display = 'flex';
       } else {
         alertBanner.style.display = 'none';
       }
     }
+
+    // Dashboard Pending Panel Count
+    const dashPendingCount = document.getElementById('dash-pending-count');
+    if (dashPendingCount) dashPendingCount.textContent = pending.length;
 
     // Admin Panel widgets
     const kpiPending = document.getElementById('kpi-pending-count');
@@ -918,6 +972,132 @@ const App = {
       }
     }
 
+    // Live Pending Access Requests on Dashboard
+    this.renderDashboardPendingRequests();
+
+    this.updatePendingBadges();
+  },
+
+  renderDashboardPendingRequests() {
+    const panel = document.getElementById('dashboard-pending-access-panel');
+    const tbody = document.getElementById('dashboard-pending-tbody');
+    const countSpan = document.getElementById('dash-pending-count');
+
+    if (!panel || !tbody) return;
+
+    const isSuperAdmin = State.currentUser && (
+      (State.currentUser.email || '').toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() ||
+      State.currentUser.role === 'Admin'
+    );
+
+    const pending = (State.users || []).filter(u => u.status === 'Pending');
+
+    if (countSpan) countSpan.textContent = pending.length;
+
+    if (!isSuperAdmin || pending.length === 0) {
+      panel.style.display = 'none';
+      tbody.innerHTML = `<tr><td colspan="6" class="empty">No pending user requests.</td></tr>`;
+      return;
+    }
+
+    panel.style.display = 'block';
+
+    tbody.innerHTML = pending.map(u => {
+      const initial = (u.full_name || u.email || 'U').charAt(0).toUpperCase();
+      const avatarStyle = u.photoURL ? `background-image:url('${escapeHtml(u.photoURL)}');` : '';
+      const isGoogle = u.photoURL || (u.auth_provider === 'google.com');
+      const dateStr = u.created_at ? new Date(u.created_at).toLocaleDateString() + ' ' + new Date(u.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'Recently';
+
+      return `
+        <tr>
+          <td>
+            <div style="display:flex; align-items:center; gap:10px;">
+              <span class="avatar" style="${avatarStyle}">${u.photoURL ? '' : initial}</span>
+              <div>
+                <b>${escapeHtml(u.full_name || 'New Member')}</b>
+                <small style="display:block; color:#94a3b8; font-family:monospace; font-size:10px;">ID: ${escapeHtml(u.id)}</small>
+              </div>
+            </div>
+          </td>
+          <td><b>${escapeHtml(u.email || '—')}</b></td>
+          <td>
+            <span class="provider-badge" style="display:inline-flex; align-items:center; gap:4px; padding:3px 8px; border-radius:12px; font-size:11px; font-weight:600; background:#f1f5f9; color:#475569;">
+              ${isGoogle ? '🌐 Google OAuth' : '✉️ Email & Password'}
+            </span>
+          </td>
+          <td><span style="font-size:12px; color:#475569;">${dateStr}</span></td>
+          <td>
+            <select id="dash-role-select-${u.id}" style="padding:5px 8px; font-size:12px; border-radius:6px; border:1px solid #cbd5e1; background:#fff;">
+              <option value="Member" selected>Member (Standard)</option>
+              <option value="Admin">Admin (Full Control)</option>
+            </select>
+          </td>
+          <td style="text-align:right;">
+            <div class="action-btn-group" style="display:flex; gap:6px; justify-content: flex-end;">
+              <button type="button" class="approve-btn" onclick="App.approveDashboardUser('${u.id}')" style="background:#16a34a; color:#fff; border:none; padding:6px 12px; border-radius:6px; font-weight:600; cursor:pointer; font-size:12px;">✓ Approve Access</button>
+              <button type="button" class="reject-btn" onclick="App.rejectUser('${u.id}')" style="background:#dc2626; color:#fff; border:none; padding:6px 10px; border-radius:6px; font-weight:600; cursor:pointer; font-size:12px;">✕ Decline</button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  },
+
+  async approveDashboardUser(userId) {
+    const roleSelect = document.getElementById(`dash-role-select-${userId}`);
+    const assignedRole = roleSelect ? roleSelect.value : 'Member';
+    const user = (State.users || []).find(u => u.id === userId);
+    const userEmail = user ? user.email : '';
+    const userName = user ? user.full_name : 'Team Member';
+
+    // 1. Update user profile to Active in Firestore and LocalStorage
+    await Storage.updateItemField('users', userId, {
+      status: 'Active',
+      approved: true,
+      role: assignedRole,
+      approved_at: new Date().toISOString(),
+      approved_by: SUPER_ADMIN_EMAIL
+    });
+
+    // 2. Record approval in Firestore notifications
+    if (typeof fbDb !== 'undefined' && fbDb) {
+      await fbDb.collection('notifications').add(cleanDataForFirestore({
+        type: 'user_approval_granted',
+        userId: userId,
+        userEmail: userEmail,
+        userName: userName,
+        assignedRole: assignedRole,
+        approvedBy: SUPER_ADMIN_EMAIL,
+        created_at: new Date().toISOString(),
+        status: 'completed'
+      })).catch(() => {});
+    }
+
+    // 3. Send automated confirmation email to applicant via FormSubmit
+    if (userEmail) {
+      const origin = window.location.origin || '';
+      const path = window.location.pathname.replace(/[^\/]*$/, '');
+      const dashboardUrl = `${origin}${path}index.html`;
+
+      fetch('https://formsubmit.co/ajax/' + encodeURIComponent(userEmail), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({
+          _subject: `[Dexter HiTech CRM] Your Dashboard Access Has Been Approved!`,
+          _template: 'table',
+          _captcha: 'false',
+          'Status': 'Access Granted (Approved)',
+          'Role Assigned': assignedRole,
+          'Approved By': SUPER_ADMIN_EMAIL,
+          'Message': `Hello ${userName}, your access request for Dexter HiTech CRM has been approved. You now have full access to the dashboard.`,
+          'Dashboard Link': dashboardUrl
+        })
+      }).catch(() => {});
+    }
+
+    this.showFlash(`User ${userEmail} approved with role ${assignedRole}! Dashboard access granted.`, 'success');
+    await Storage.syncWithFirestore();
+    this.renderDashboard();
     this.updatePendingBadges();
   },
 
@@ -1886,23 +2066,37 @@ const App = {
     if (clientForm) {
       clientForm.addEventListener('submit', async e => {
         e.preventDefault();
-        const f = clientForm.elements;
-        const newClient = {
-          name: f.name.value.trim(),
-          company: f.company.value.trim(),
-          contact_person: f.contact_person.value.trim(),
-          phone: f.phone.value.trim(),
-          email: f.email.value.trim(),
-          service: f.service.value.trim(),
-          monthly_fee: parseFloat(f.monthly_fee.value || 0),
-          start_date: f.start_date.value,
-          owner_id: f.owner_id.value || null,
-          status: f.status.value || 'Active',
-          notes: f.notes.value.trim()
+        const getVal = (name) => {
+          const el = clientForm.querySelector(`[name="${name}"]`);
+          return el ? el.value.trim() : '';
         };
+
+        const name = getVal('name');
+        if (!name) {
+          App.showFlash('Please enter a client name.', 'error');
+          return;
+        }
+
+        const feeRaw = getVal('monthly_fee');
+        const feeVal = feeRaw ? (parseFloat(feeRaw) || 0) : 0;
+
+        const newClient = {
+          name: name,
+          company: getVal('company'),
+          contact_person: getVal('contact_person'),
+          phone: getVal('phone'),
+          email: getVal('email'),
+          service: getVal('service'),
+          monthly_fee: feeVal,
+          start_date: getVal('start_date') || null,
+          owner_id: getVal('owner_id') || null,
+          status: getVal('status') || 'Active',
+          notes: getVal('notes')
+        };
+
         await Storage.saveItem('clients', newClient);
         clientForm.reset();
-        App.showFlash('Client added successfully.', 'success');
+        App.showFlash(`Client "${name}" added successfully.`, 'success');
         App.renderClients();
       });
     }
@@ -1912,19 +2106,30 @@ const App = {
     if (taskForm) {
       taskForm.addEventListener('submit', async e => {
         e.preventDefault();
-        const f = taskForm.elements;
-        const newTask = {
-          title: f.title.value.trim(),
-          client_id: f.client_id.value || null,
-          assignee_id: f.assignee_id.value || null,
-          due_date: f.due_date.value || null,
-          priority: f.priority.value || 'Medium',
-          status: f.status.value || 'To Do',
-          description: f.description.value.trim()
+        const getVal = (name) => {
+          const el = taskForm.querySelector(`[name="${name}"]`);
+          return el ? el.value.trim() : '';
         };
+
+        const title = getVal('title');
+        if (!title) {
+          App.showFlash('Please enter a task title.', 'error');
+          return;
+        }
+
+        const newTask = {
+          title: title,
+          client_id: getVal('client_id') || null,
+          assignee_id: getVal('assignee_id') || null,
+          due_date: getVal('due_date') || null,
+          priority: getVal('priority') || 'Medium',
+          status: getVal('status') || 'To Do',
+          description: getVal('description')
+        };
+
         await Storage.saveItem('tasks', newTask);
         taskForm.reset();
-        App.showFlash('Task created.', 'success');
+        App.showFlash(`Task "${title}" created.`, 'success');
         App.renderTasks();
       });
     }
@@ -1933,24 +2138,38 @@ const App = {
     const reqForm = document.getElementById('request-form');
     if (reqForm) {
       const today = new Date().toISOString().split('T')[0];
-      if (reqForm.elements.received_date && !reqForm.elements.received_date.value) {
-        reqForm.elements.received_date.value = today;
+      const recEl = reqForm.querySelector('[name="received_date"]');
+      if (recEl && !recEl.value) {
+        recEl.value = today;
       }
+
       reqForm.addEventListener('submit', async e => {
         e.preventDefault();
-        const f = reqForm.elements;
-        const newReq = {
-          client_id: f.client_id.value || null,
-          received_date: f.received_date.value || today,
-          request: f.request.value.trim(),
-          owner_id: f.owner_id.value || null,
-          due_date: f.due_date.value || null,
-          status: f.status.value || 'New',
-          notes: f.notes.value.trim()
+        const getVal = (name) => {
+          const el = reqForm.querySelector(`[name="${name}"]`);
+          return el ? el.value.trim() : '';
         };
+
+        const reqText = getVal('request');
+        if (!reqText) {
+          App.showFlash('Please enter request details.', 'error');
+          return;
+        }
+
+        const newReq = {
+          client_id: getVal('client_id') || null,
+          received_date: getVal('received_date') || today,
+          request: reqText,
+          owner_id: getVal('owner_id') || null,
+          due_date: getVal('due_date') || null,
+          status: getVal('status') || 'New',
+          notes: getVal('notes')
+        };
+
         await Storage.saveItem('requests', newReq);
         reqForm.reset();
-        if (f.received_date) f.received_date.value = today;
+        const recReset = reqForm.querySelector('[name="received_date"]');
+        if (recReset) recReset.value = today;
         App.showFlash('Client request logged.', 'success');
         App.renderRequests();
       });
@@ -1961,18 +2180,32 @@ const App = {
     if (billForm) {
       billForm.addEventListener('submit', async e => {
         e.preventDefault();
-        const f = billForm.elements;
-        const newBill = {
-          client_id: f.client_id.value,
-          invoice_no: f.invoice_no.value.trim(),
-          billing_month: f.billing_month.value.trim(),
-          amount: parseFloat(f.amount.value || 0),
-          invoice_date: f.invoice_date.value || null,
-          due_date: f.due_date.value || null,
-          payment_date: f.payment_date.value || null,
-          status: f.status.value || 'Pending',
-          notes: f.notes.value.trim()
+        const getVal = (name) => {
+          const el = billForm.querySelector(`[name="${name}"]`);
+          return el ? el.value.trim() : '';
         };
+
+        const clientId = getVal('client_id');
+        if (!clientId) {
+          App.showFlash('Please select a client.', 'error');
+          return;
+        }
+
+        const amtRaw = getVal('amount');
+        const amtVal = amtRaw ? (parseFloat(amtRaw) || 0) : 0;
+
+        const newBill = {
+          client_id: clientId,
+          invoice_no: getVal('invoice_no'),
+          billing_month: getVal('billing_month'),
+          amount: amtVal,
+          invoice_date: getVal('invoice_date') || null,
+          due_date: getVal('due_date') || null,
+          payment_date: getVal('payment_date') || null,
+          status: getVal('status') || 'Pending',
+          notes: getVal('notes')
+        };
+
         await Storage.saveItem('billing', newBill);
         billForm.reset();
         App.showFlash('Billing record added.', 'success');
@@ -1985,10 +2218,18 @@ const App = {
     if (teamForm) {
       teamForm.addEventListener('submit', async e => {
         e.preventDefault();
-        const f = teamForm.elements;
-        const email = f.username.value.trim().toLowerCase();
-        const fullName = f.full_name.value.trim();
-        const role = f.role.value || 'Member';
+        const getVal = (name) => {
+          const el = teamForm.querySelector(`[name="${name}"]`);
+          return el ? el.value.trim() : '';
+        };
+        const email = (getVal('username') || getVal('email')).toLowerCase();
+        const fullName = getVal('full_name');
+        const role = getVal('role') || 'Member';
+
+        if (!email) {
+          App.showFlash('Please enter a team member email.', 'error');
+          return;
+        }
 
         const newMember = {
           email: email,
@@ -2004,6 +2245,7 @@ const App = {
         teamForm.reset();
         App.showFlash(`Team member pre-approved: ${email}. They can now sign in with Google or Email.`, 'success');
         await Storage.syncWithFirestore();
+        App.renderTeam();
       });
     }
 
@@ -2012,10 +2254,18 @@ const App = {
     if (adminPreauthForm) {
       adminPreauthForm.addEventListener('submit', async e => {
         e.preventDefault();
-        const f = adminPreauthForm.elements;
-        const email = f.email.value.trim().toLowerCase();
-        const fullName = f.full_name.value.trim();
-        const role = f.role.value || 'Member';
+        const getVal = (name) => {
+          const el = adminPreauthForm.querySelector(`[name="${name}"]`);
+          return el ? el.value.trim() : '';
+        };
+        const email = getVal('email').toLowerCase();
+        const fullName = getVal('full_name');
+        const role = getVal('role') || 'Member';
+
+        if (!email) {
+          App.showFlash('Please enter an email address to pre-authorize.', 'error');
+          return;
+        }
 
         const newPreMember = {
           email: email,

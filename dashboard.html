@@ -78,6 +78,35 @@
       <a href="admin.html" class="primary small-btn" style="text-decoration:none;">Review & Approve in Admin Panel →</a>
     </div>
 
+    <!-- Live Pending User Access Requests Panel on Dashboard -->
+    <section class="panel" id="dashboard-pending-access-panel" style="display:none; border: 1.5px solid #fde68a; background: rgba(254, 252, 232, 0.75); margin-bottom: 24px;">
+      <div class="panel-head">
+        <div>
+          <h3 style="color:#b45309; display:flex; align-items:center; gap:8px;">
+            <span>⏳</span> Pending User Access Requests (<span id="dash-pending-count">0</span>)
+          </h3>
+          <p>These registered users are currently awaiting your authorization. Click <b>Approve Access</b> to unlock their dashboard access.</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>APPLICANT</th>
+              <th>EMAIL ADDRESS</th>
+              <th>SIGN-IN METHOD</th>
+              <th>REQUESTED ON</th>
+              <th>ASSIGN ROLE</th>
+              <th style="text-align:right;">ACTION</th>
+            </tr>
+          </thead>
+          <tbody id="dashboard-pending-tbody">
+            <tr><td colspan="6" class="empty">No pending user requests.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     <section class="welcome-row">
       <div>
         <h2>Your operations, at a glance.</h2>

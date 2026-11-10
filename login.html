@@ -5,45 +5,95 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Sign in | Dexter HiTech CRM</title>
   <link rel="stylesheet" href="style.css">
+  
+  <!-- Firebase Compat CDN -->
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+  
   <script src="firebase-config.js"></script>
   <script src="app.js"></script>
 </head>
 <body>
   <div class="login-wrap">
+    <!-- Left Card: Form -->
     <div class="login-card">
       <a class="brand login-brand" href="index.html">
         <span class="brand-mark">D</span>
         <span>DEXTER <b>HITECH</b><small>CLIENT OPERATIONS</small></span>
       </a>
+
       <div class="eyebrow">TEAM WORKSPACE</div>
-      <h1>Welcome back.</h1>
-      <p class="muted">Sign in to manage your client operations.</p>
-      
+      <h1 id="auth-title">Welcome back.</h1>
+      <p class="muted" id="auth-subtitle">Sign in to manage your client operations.</p>
+
+      <!-- Google Sign-In Button -->
+      <button type="button" class="google-btn" id="google-signin-btn" onclick="Auth.loginWithGoogle()">
+        <svg viewBox="0 0 24 24">
+          <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+          <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+          <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+          <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+        </svg>
+        Continue with Google
+      </button>
+
+      <!-- Divider -->
+      <div class="login-divider">
+        <span>or use email</span>
+      </div>
+
+      <!-- Mode Tabs (Sign In vs Create Account) -->
+      <div class="auth-tabs">
+        <button type="button" class="auth-tab-btn active" id="tab-signin" onclick="App.switchAuthTab('signin')">Sign in</button>
+        <button type="button" class="auth-tab-btn" id="tab-signup" onclick="App.switchAuthTab('signup')">Create account</button>
+      </div>
+
+      <!-- Sign In Form -->
       <form id="login-form" class="form-stack">
-        <label>Username
-          <input id="login-username" required autofocus placeholder="Your username" value="admin">
+        <label>Email address
+          <input type="email" id="login-email" required autofocus placeholder="name@company.com">
         </label>
         <label>Password
-          <input type="password" id="login-password" required placeholder="Your password" value="ChangeMe123!">
+          <input type="password" id="login-password" required placeholder="Your password">
         </label>
-        <button type="submit" class="primary full">Sign in <span>→</span></button>
+        <div style="display:flex; justify-content:flex-end;">
+          <a href="#" onclick="Auth.forgotPassword(event)" style="font-size:11px; color:#6a6e75; text-decoration:none;">Forgot password?</a>
+        </div>
+        <button type="submit" class="primary full" id="signin-submit-btn">Sign in <span>→</span></button>
+      </form>
+
+      <!-- Create Account Form (Hidden by default) -->
+      <form id="signup-form" class="form-stack" style="display:none;">
+        <label>Full name
+          <input type="text" id="signup-name" required placeholder="Alex Turner">
+        </label>
+        <label>Email address
+          <input type="email" id="signup-email" required placeholder="name@company.com">
+        </label>
+        <label>Password
+          <input type="password" id="signup-password" minlength="6" required placeholder="Minimum 6 characters">
+        </label>
+        <label>Confirm password
+          <input type="password" id="signup-confirm-password" minlength="6" required placeholder="Re-type password">
+        </label>
+        <button type="submit" class="primary full" id="signup-submit-btn">Create account <span>→</span></button>
       </form>
 
       <div id="login-error" class="flash error" style="display:none; margin-top:14px;"></div>
-      <small class="login-note">Authorised team members only.</small>
+      <div id="login-success" class="flash success" style="display:none; margin-top:14px;"></div>
+      
+      <small class="login-note">Secured with Firebase Authentication.</small>
     </div>
 
+    <!-- Right Side: Brand Showcase -->
     <div class="login-side">
       <div class="side-orb"></div>
       <span class="eyebrow">ONE WORKSPACE. EVERY CLIENT.</span>
       <h2>Keep every detail<br>moving forward.</h2>
-      <p>Clients, delivery, requests and billing — organised in one place.</p>
+      <p>Clients, delivery, requests and billing — organised in one secure place.</p>
       <span class="side-footer">DEXTER HITECH · 2026</span>
     </div>
   </div>
 </body>
 </html>
-

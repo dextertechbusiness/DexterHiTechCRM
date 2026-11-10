@@ -13,8 +13,19 @@
   <script src="app.js"></script>
 </head>
 <body>
+  <!-- Mobile Header -->
+  <div class="mobile-header">
+    <a class="brand" href="index.html">
+      <span class="brand-mark">D</span>
+      <span>DEXTER <b>HITECH</b></span>
+    </a>
+    <button type="button" class="mobile-toggle" id="mobile-menu-toggle" aria-label="Open Navigation">☰</button>
+  </div>
+  <div class="sidebar-overlay" id="sidebar-overlay"></div>
+
   <!-- Sidebar -->
   <aside class="sidebar">
+    <button type="button" class="sidebar-close-btn" id="sidebar-close-btn">✕</button>
     <a class="brand" href="index.html">
       <span class="brand-mark">D</span>
       <span>DEXTER <b>HITECH</b><small>CLIENT OPERATIONS</small></span>
@@ -34,12 +45,12 @@
       <div class="user-chip">
         <span class="avatar" id="user-avatar">A</span>
         <span>
-          <b id="user-name">Dexter HiTech Admin</b>
-          <small id="user-role">Admin</small>
+          <b id="user-name">Loading...</b>
+          <small id="user-role">Member</small>
         </span>
       </div>
-      <a class="logout" href="account.html">My account · Password</a>
-      <a class="logout" href="login.html" onclick="Auth.logout()">Sign out ↗</a>
+      <a class="logout" href="account.html">My account · Security</a>
+      <a class="logout" onclick="Auth.logout()">Sign out ↗</a>
     </div>
   </aside>
 

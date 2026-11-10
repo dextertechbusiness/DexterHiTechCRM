@@ -13,8 +13,19 @@
   <script src="app.js"></script>
 </head>
 <body>
+  <!-- Mobile Header -->
+  <div class="mobile-header">
+    <a class="brand" href="index.html">
+      <span class="brand-mark">D</span>
+      <span>DEXTER <b>HITECH</b></span>
+    </a>
+    <button type="button" class="mobile-toggle" id="mobile-menu-toggle" aria-label="Open Navigation">☰</button>
+  </div>
+  <div class="sidebar-overlay" id="sidebar-overlay"></div>
+
   <!-- Sidebar -->
   <aside class="sidebar">
+    <button type="button" class="sidebar-close-btn" id="sidebar-close-btn">✕</button>
     <a class="brand" href="index.html">
       <span class="brand-mark">D</span>
       <span>DEXTER <b>HITECH</b><small>CLIENT OPERATIONS</small></span>
@@ -34,12 +45,12 @@
       <div class="user-chip">
         <span class="avatar" id="user-avatar">A</span>
         <span>
-          <b id="user-name">Dexter HiTech Admin</b>
-          <small id="user-role">Admin</small>
+          <b id="user-name">Loading...</b>
+          <small id="user-role">Member</small>
         </span>
       </div>
-      <a class="logout" href="account.html">My account · Password</a>
-      <a class="logout" href="login.html" onclick="Auth.logout()">Sign out ↗</a>
+      <a class="logout" href="account.html">My account · Security</a>
+      <a class="logout" onclick="Auth.logout()">Sign out ↗</a>
     </div>
   </aside>
 
@@ -59,35 +70,32 @@
     <div id="flash-message" class="flash"></div>
 
     <div class="page-intro">
-      <p>Create individual sign-in accounts for your team. Only administrators can access this page.</p>
+      <p>Manage team member access and permissions. Team members can sign in with Google or their email address.</p>
     </div>
 
-    <!-- Create Team Form -->
+    <!-- Add Team Member Form -->
     <section class="panel form-panel">
       <div class="panel-head">
         <div>
-          <h3>Create team account</h3>
-          <p>Use a unique username and a strong temporary password.</p>
+          <h3>Add / Invite team member</h3>
+          <p>Register team access for an email address.</p>
         </div>
       </div>
       <form id="team-form" class="form-grid">
         <label>Full name *
           <input name="full_name" required placeholder="Alex Turner">
         </label>
-        <label>Username *
-          <input name="username" required placeholder="alex">
+        <label>Email address *
+          <input name="username" type="email" required placeholder="alex@company.com">
         </label>
-        <label>Temporary password *
-          <input type="password" name="password" minlength="8" required placeholder="Min 8 characters">
-        </label>
-        <label>Role
+        <label>Access role
           <select name="role">
             <option value="Member">Member</option>
             <option value="Admin">Admin</option>
           </select>
         </label>
         <div class="form-submit">
-          <button type="submit" class="primary">Create account →</button>
+          <button type="submit" class="primary">Add team member →</button>
         </div>
       </form>
     </section>
@@ -105,12 +113,13 @@
           <thead>
             <tr>
               <th>TEAM MEMBER</th>
-              <th>USERNAME</th>
+              <th>EMAIL</th>
               <th>ACCESS ROLE</th>
+              <th>ACTION</th>
             </tr>
           </thead>
           <tbody id="team-table-body">
-            <tr><td colspan="3" class="empty">No team accounts yet.</td></tr>
+            <tr><td colspan="4" class="empty">No team accounts yet.</td></tr>
           </tbody>
         </table>
       </div>
@@ -122,4 +131,3 @@
   </main>
 </body>
 </html>
-

@@ -13,8 +13,19 @@
   <script src="app.js"></script>
 </head>
 <body>
+  <!-- Mobile Header -->
+  <div class="mobile-header">
+    <a class="brand" href="index.html">
+      <span class="brand-mark">D</span>
+      <span>DEXTER <b>HITECH</b></span>
+    </a>
+    <button type="button" class="mobile-toggle" id="mobile-menu-toggle" aria-label="Open Navigation">☰</button>
+  </div>
+  <div class="sidebar-overlay" id="sidebar-overlay"></div>
+
   <!-- Sidebar -->
   <aside class="sidebar">
+    <button type="button" class="sidebar-close-btn" id="sidebar-close-btn">✕</button>
     <a class="brand" href="index.html">
       <span class="brand-mark">D</span>
       <span>DEXTER <b>HITECH</b><small>CLIENT OPERATIONS</small></span>
@@ -34,12 +45,12 @@
       <div class="user-chip">
         <span class="avatar" id="user-avatar">A</span>
         <span>
-          <b id="user-name">Dexter HiTech Admin</b>
-          <small id="user-role">Admin</small>
+          <b id="user-name">Loading...</b>
+          <small id="user-role">Member</small>
         </span>
       </div>
-      <a class="logout" href="account.html">My account · Password</a>
-      <a class="logout" href="login.html" onclick="Auth.logout()">Sign out ↗</a>
+      <a class="logout" href="account.html">My account · Security</a>
+      <a class="logout" onclick="Auth.logout()">Sign out ↗</a>
     </div>
   </aside>
 
@@ -59,15 +70,28 @@
     <div id="flash-message" class="flash"></div>
 
     <div class="page-intro">
-      <p>Update your sign-in password. Use a unique password with at least 8 characters.</p>
+      <p>View your profile and manage account security.</p>
     </div>
 
-    <!-- Password Form -->
-    <section class="panel form-panel" style="max-width:650px">
+    <!-- Account Details Card -->
+    <section class="panel" style="max-width:650px; margin-bottom:18px;">
+      <div class="panel-head">
+        <div>
+          <h3>Profile & Authentication Method</h3>
+          <p id="account-auth-method">Loading account status...</p>
+        </div>
+      </div>
+      <p style="font-size:12px; color:#555; margin:0;">
+        Active Account: <b id="account-username-display">...</b>
+      </p>
+    </section>
+
+    <!-- Password Management Form Card -->
+    <section class="panel form-panel" id="password-form-card" style="max-width:650px">
       <div class="panel-head">
         <div>
           <h3>Change password</h3>
-          <p>Your account: <span id="account-username-display">admin</span></p>
+          <p>For Email & Password accounts only</p>
         </div>
       </div>
       <form id="password-form" class="form-grid" style="grid-template-columns:1fr">
@@ -75,10 +99,10 @@
           <input type="password" name="current_password" required placeholder="Current password">
         </label>
         <label>New password
-          <input type="password" name="new_password" minlength="8" required placeholder="Min 8 characters">
+          <input type="password" name="new_password" minlength="6" required placeholder="Minimum 6 characters">
         </label>
         <label>Confirm new password
-          <input type="password" name="confirm_password" minlength="8" required placeholder="Re-type new password">
+          <input type="password" name="confirm_password" minlength="6" required placeholder="Re-type new password">
         </label>
         <div class="form-submit">
           <button type="submit" class="primary">Update password →</button>
@@ -92,4 +116,3 @@
   </main>
 </body>
 </html>
-

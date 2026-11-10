@@ -1,16 +1,7 @@
 /**
  * Dexter HiTech CRM - Core Application Engine
- * Supports Multi-Page HTML with Firebase Firestore & offline LocalStorage resilience.
+ * Secured with Firebase Authentication (Email/Password + Google) & Cloud Firestore
  */
-
-const DEFAULT_ADMIN = {
-  id: 'user_admin',
-  username: 'admin',
-  password: 'ChangeMe123!',
-  full_name: 'Dexter HiTech Admin',
-  role: 'Admin',
-  created_at: new Date().toISOString()
-};
 
 const State = {
   currentUser: null,
@@ -22,7 +13,178 @@ const State = {
 };
 
 // ---------------------------------------------------------------------------
-// Storage Layer: Fast LocalStorage First + Non-blocking Firestore Sync
+// 1. Firebase Authentication Service
+// ---------------------------------------------------------------------------
+const Auth = {
+  init() {
+    const currentPage = window.location.pathname.split('/').pop() || 'index.html';
+    const isLoginPage = (currentPage === 'login.html');
+
+    if (typeof fbAuth === 'undefined' || fbAuth === null) {
+      console.warn("[Auth] Firebase Auth is not initialized. Check firebase-config.js.");
+      return;
+    }
+
+    // Real-time Auth State Listener
+    fbAuth.onAuthStateChanged(async (firebaseUser) => {
+      if (firebaseUser) {
+        console.log("[Auth] User authenticated:", firebaseUser.email || firebaseUser.displayName);
+        
+        // 1. Load or initialize user profile in Firestore
+        await this.syncUserProfile(firebaseUser);
+
+        // 2. If already on login page, redirect to dashboard
+        if (isLoginPage) {
+          window.location.href = 'index.html';
+          return;
+        }
+
+        // 3. User is authorized on internal pages
+        App.onUserAuthenticated();
+
+      } else {
+        console.log("[Auth] No active session.");
+        State.currentUser = null;
+        sessionStorage.removeItem('dexter_session');
+
+        // If on a protected page, redirect to login
+        if (!isLoginPage) {
+          window.location.href = 'login.html';
+        }
+      }
+    });
+  },
+
+  async syncUserProfile(firebaseUser) {
+    let profile = null;
+    const uid = firebaseUser.uid;
+    const email = firebaseUser.email || '';
+    const name = firebaseUser.displayName || (email ? email.split('@')[0] : 'Member');
+    const photoURL = firebaseUser.photoURL || '';
+
+    try {
+      if (typeof fbDb !== 'undefined' && fbDb) {
+        const docRef = fbDb.collection('users').doc(uid);
+        const snap = await docRef.get();
+        if (snap.exists) {
+          profile = { id: uid, ...snap.data() };
+        } else {
+          // If first user, make Admin; otherwise Member
+          const allUsers = await fbDb.collection('users').get();
+          const role = (allUsers.empty || allUsers.size === 0) ? 'Admin' : 'Member';
+          
+          profile = {
+            id: uid,
+            uid: uid,
+            email: email,
+            full_name: name,
+            photoURL: photoURL,
+            role: role,
+            created_at: new Date().toISOString()
+          };
+          await docRef.set(profile);
+        }
+      }
+    } catch (err) {
+      console.warn("[Auth] Firestore profile fetch note:", err.message);
+    }
+
+    if (!profile) {
+      profile = {
+        id: uid,
+        uid: uid,
+        email: email,
+        full_name: name,
+        photoURL: photoURL,
+        role: 'Admin'
+      };
+    }
+
+    State.currentUser = profile;
+    sessionStorage.setItem('dexter_session', JSON.stringify(profile));
+  },
+
+  async loginWithEmail(email, password) {
+    return await fbAuth.signInWithEmailAndPassword(email.trim(), password);
+  },
+
+  async signUpWithEmail(email, password, fullName) {
+    const cred = await fbAuth.createUserWithEmailAndPassword(email.trim(), password);
+    if (fullName && cred.user) {
+      await cred.user.updateProfile({ displayName: fullName.trim() });
+    }
+    await this.syncUserProfile(cred.user);
+    return cred.user;
+  },
+
+  async loginWithGoogle() {
+    const errEl = document.getElementById('login-error');
+    if (errEl) errEl.style.display = 'none';
+
+    try {
+      const provider = new firebase.auth.GoogleAuthProvider();
+      provider.addScope('email');
+      provider.addScope('profile');
+      
+      const result = await fbAuth.signInWithPopup(provider);
+      await this.syncUserProfile(result.user);
+      window.location.href = 'index.html';
+    } catch (err) {
+      console.error("[Auth] Google Sign-in Error:", err);
+      if (err.code === 'auth/popup-blocked') {
+        // Fallback to redirect if popup was blocked by browser
+        const provider = new firebase.auth.GoogleAuthProvider();
+        fbAuth.signInWithRedirect(provider);
+      } else if (errEl) {
+        errEl.textContent = err.message || 'Google Sign-in failed. Please try again.';
+        errEl.style.display = 'block';
+      }
+    }
+  },
+
+  async logout() {
+    try {
+      if (typeof fbAuth !== 'undefined' && fbAuth) {
+        await fbAuth.signOut();
+      }
+    } catch (e) {}
+    sessionStorage.removeItem('dexter_session');
+    window.location.href = 'login.html';
+  },
+
+  async forgotPassword(e) {
+    if (e) e.preventDefault();
+    const email = document.getElementById('login-email') ? document.getElementById('login-email').value.trim() : '';
+    const targetEmail = email || prompt("Please enter your account email to receive a password reset link:");
+    if (!targetEmail) return;
+
+    try {
+      await fbAuth.sendPasswordResetEmail(targetEmail);
+      alert(`Password reset email sent to ${targetEmail}. Please check your inbox.`);
+    } catch (err) {
+      alert("Error: " + err.message);
+    }
+  },
+
+  async changePassword(currentPassword, newPassword) {
+    const user = fbAuth.currentUser;
+    if (!user) throw new Error("No authenticated user.");
+
+    if (user.providerData && user.providerData.some(p => p.providerId === 'google.com')) {
+      throw new Error("Your account is managed via Google Sign-In. Password updates are managed through your Google Account.");
+    }
+
+    // Re-authenticate if possible
+    if (currentPassword && user.email) {
+      const cred = firebase.auth.EmailAuthProvider.credential(user.email, currentPassword);
+      await user.reauthenticateWithCredential(cred);
+    }
+    await user.updatePassword(newPassword);
+  }
+};
+
+// ---------------------------------------------------------------------------
+// 2. Storage & Firestore Sync Layer
 // ---------------------------------------------------------------------------
 const Storage = {
   isCloud() {
@@ -37,22 +199,15 @@ const Storage = {
       State.requests = JSON.parse(localStorage.getItem('dexter_requests') || '[]');
       State.billing = JSON.parse(localStorage.getItem('dexter_billing') || '[]');
     } catch (e) {
-      console.warn("Error parsing local storage", e);
-    }
-
-    if (State.users.length === 0) {
-      State.users = [DEFAULT_ADMIN];
-      localStorage.setItem('dexter_users', JSON.stringify(State.users));
+      console.warn("Local storage parse note", e);
     }
   },
 
   async syncWithFirestore() {
     if (!this.isCloud()) return;
 
-    const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Firestore timeout')), 2500));
-
     try {
-      const fetchCollections = Promise.all([
+      await Promise.all([
         this.fetchCollection('users'),
         this.fetchCollection('clients'),
         this.fetchCollection('tasks'),
@@ -60,19 +215,11 @@ const Storage = {
         this.fetchCollection('billing')
       ]);
 
-      await Promise.race([fetchCollections, timeout]);
-
-      // If Firestore users collection is empty, bootstrap admin
-      if (State.users.length === 0) {
-        State.users = [DEFAULT_ADMIN];
-        fbDb.collection('users').doc(DEFAULT_ADMIN.id).set(DEFAULT_ADMIN).catch(() => {});
-      }
-
-      // Re-render active page with fresh cloud data
+      // Re-render active view with latest cloud data
       App.renderCurrentPage();
-      console.log("[Firebase] Cloud data synced successfully.");
+      console.log("[Firebase] Firestore data synchronized.");
     } catch (err) {
-      console.warn("[Firebase] Background sync notice (using local data):", err.message);
+      console.warn("[Firebase] Background sync notice:", err.message);
     }
   },
 
@@ -82,10 +229,9 @@ const Storage = {
     snap.forEach(doc => {
       items.push({ id: doc.id, ...doc.data() });
     });
-    if (items.length > 0) {
-      State[colName] = items;
-      localStorage.setItem('dexter_' + colName, JSON.stringify(items));
-    }
+    State[colName] = items;
+    localStorage.setItem('dexter_' + colName, JSON.stringify(items));
+    return items;
   },
 
   async saveItem(colName, item) {
@@ -107,11 +253,20 @@ const Storage = {
     localStorage.setItem('dexter_' + colName, JSON.stringify(list));
 
     if (this.isCloud()) {
-      fbDb.collection(colName).doc(item.id).set(item).catch(e => {
-        console.warn(`[Firebase] Save to ${colName} queued locally:`, e);
-      });
+      await fbDb.collection(colName).doc(item.id).set(item);
     }
     return item;
+  },
+
+  async updateItemField(colName, id, fields) {
+    const item = State[colName].find(x => x.id === id);
+    if (item) {
+      Object.assign(item, fields);
+      localStorage.setItem('dexter_' + colName, JSON.stringify(State[colName]));
+    }
+    if (this.isCloud()) {
+      await fbDb.collection(colName).doc(id).update(fields);
+    }
   },
 
   async deleteItem(colName, id) {
@@ -119,87 +274,59 @@ const Storage = {
     localStorage.setItem('dexter_' + colName, JSON.stringify(State[colName]));
 
     if (this.isCloud()) {
-      fbDb.collection(colName).doc(id).delete().catch(e => {
-        console.warn(`[Firebase] Delete from ${colName} queued locally:`, e);
-      });
+      await fbDb.collection(colName).doc(id).delete();
     }
   }
 };
 
 // ---------------------------------------------------------------------------
-// Authentication
-// ---------------------------------------------------------------------------
-const Auth = {
-  init() {
-    const saved = sessionStorage.getItem('dexter_session');
-    if (saved) {
-      try {
-        State.currentUser = JSON.parse(saved);
-      } catch (e) {
-        State.currentUser = DEFAULT_ADMIN;
-      }
-    } else {
-      // Default to admin session so user immediately sees all pages
-      State.currentUser = DEFAULT_ADMIN;
-      sessionStorage.setItem('dexter_session', JSON.stringify(DEFAULT_ADMIN));
-    }
-  },
-
-  async login(username, password) {
-    username = (username || '').trim();
-    const user = State.users.find(u => u.username.toLowerCase() === username.toLowerCase());
-
-    if (!user || user.password !== password) {
-      throw new Error('Invalid username or password.');
-    }
-
-    State.currentUser = {
-      id: user.id,
-      name: user.full_name,
-      username: user.username,
-      role: user.role
-    };
-
-    sessionStorage.setItem('dexter_session', JSON.stringify(State.currentUser));
-    return State.currentUser;
-  },
-
-  logout() {
-    sessionStorage.removeItem('dexter_session');
-    window.location.href = 'login.html';
-  },
-
-  async changePassword(currentPassword, newPassword) {
-    const user = State.users.find(u => u.id === State.currentUser.id);
-    if (!user) throw new Error('User not found.');
-
-    if (user.password !== currentPassword) {
-      throw new Error('Current password is incorrect.');
-    }
-    if (!newPassword || newPassword.length < 8) {
-      throw new Error('New password must be at least 8 characters.');
-    }
-
-    user.password = newPassword;
-    await Storage.saveItem('users', user);
-  }
-};
-
-// ---------------------------------------------------------------------------
-// App Controller
+// 3. UI Application Controller
 // ---------------------------------------------------------------------------
 const App = {
   start() {
-    Auth.init();
     Storage.loadLocalData();
-
-    this.updateUserChip();
     this.highlightActiveNav();
-    this.renderCurrentPage();
     this.bindEvents();
+    this.setupMobileDrawer();
 
-    // Trigger non-blocking Firestore sync in background
+    // Start Authentication Watcher
+    Auth.init();
+  },
+
+  onUserAuthenticated() {
+    this.updateUserChip();
+    this.renderCurrentPage();
+
+    // Sync cloud data in background
     Storage.syncWithFirestore();
+  },
+
+  // Mobile Drawer Setup
+  setupMobileDrawer() {
+    const toggleBtn = document.getElementById('mobile-menu-toggle');
+    const sidebar = document.querySelector('.sidebar');
+    const overlay = document.getElementById('sidebar-overlay');
+    const closeBtn = document.getElementById('sidebar-close-btn');
+
+    if (toggleBtn && sidebar && overlay) {
+      toggleBtn.addEventListener('click', () => {
+        sidebar.classList.add('open');
+        overlay.classList.add('open');
+      });
+
+      const closeDrawer = () => {
+        sidebar.classList.remove('open');
+        overlay.classList.remove('open');
+      };
+
+      overlay.addEventListener('click', closeDrawer);
+      if (closeBtn) closeBtn.addEventListener('click', closeDrawer);
+
+      // Close drawer when any nav link is tapped
+      sidebar.querySelectorAll('.nav').forEach(link => {
+        link.addEventListener('click', closeDrawer);
+      });
+    }
   },
 
   highlightActiveNav() {
@@ -207,6 +334,7 @@ const App = {
     const navMap = {
       '': 'nav-dashboard',
       'index.html': 'nav-dashboard',
+      'dashboard.html': 'nav-dashboard',
       'clients.html': 'nav-clients',
       'tasks.html': 'nav-tasks',
       'requests.html': 'nav-requests',
@@ -223,22 +351,32 @@ const App = {
 
   updateUserChip() {
     if (!State.currentUser) return;
-    const initial = (State.currentUser.name || 'A').charAt(0).toUpperCase();
+    const user = State.currentUser;
+    const initial = (user.full_name || user.email || 'U').charAt(0).toUpperCase();
 
     const avatar = document.getElementById('user-avatar');
-    if (avatar) avatar.textContent = initial;
+    if (avatar) {
+      if (user.photoURL) {
+        avatar.style.backgroundImage = `url('${user.photoURL}')`;
+        avatar.textContent = '';
+      } else {
+        avatar.style.backgroundImage = 'none';
+        avatar.textContent = initial;
+      }
+    }
 
     const name = document.getElementById('user-name');
-    if (name) name.textContent = State.currentUser.name;
+    if (name) name.textContent = user.full_name || user.email;
 
     const role = document.getElementById('user-role');
-    if (role) role.textContent = State.currentUser.role;
+    if (role) role.textContent = user.role || 'Member';
 
+    // Show/hide admin-only nav items
     const teamNav = document.getElementById('nav-team');
-    if (teamNav) teamNav.style.display = State.currentUser.role === 'Admin' ? 'flex' : 'none';
+    if (teamNav) teamNav.style.display = user.role === 'Admin' ? 'flex' : 'none';
 
     const teamHeader = document.getElementById('team-nav-header');
-    if (teamHeader) teamHeader.style.display = State.currentUser.role === 'Admin' ? 'block' : 'none';
+    if (teamHeader) teamHeader.style.display = user.role === 'Admin' ? 'block' : 'none';
 
     const todayDate = document.getElementById('today-date');
     if (todayDate) todayDate.textContent = new Date().toISOString().split('T')[0];
@@ -258,7 +396,7 @@ const App = {
   renderCurrentPage() {
     const path = window.location.pathname.split('/').pop() || 'index.html';
 
-    if (path === 'index.html' || path === '') {
+    if (path === 'index.html' || path === 'dashboard.html' || path === '') {
       this.renderDashboard();
     } else if (path === 'clients.html') {
       this.renderClients();
@@ -275,8 +413,39 @@ const App = {
     }
   },
 
+  // Switch between Sign in and Create account in login.html
+  switchAuthTab(tab) {
+    const signinTab = document.getElementById('tab-signin');
+    const signupTab = document.getElementById('tab-signup');
+    const loginForm = document.getElementById('login-form');
+    const signupForm = document.getElementById('signup-form');
+    const authTitle = document.getElementById('auth-title');
+    const authSubtitle = document.getElementById('auth-subtitle');
+    const errEl = document.getElementById('login-error');
+    const succEl = document.getElementById('login-success');
+
+    if (errEl) errEl.style.display = 'none';
+    if (succEl) succEl.style.display = 'none';
+
+    if (tab === 'signup') {
+      if (signinTab) signinTab.classList.remove('active');
+      if (signupTab) signupTab.classList.add('active');
+      if (loginForm) loginForm.style.display = 'none';
+      if (signupForm) signupForm.style.display = 'grid';
+      if (authTitle) authTitle.textContent = 'Create your account';
+      if (authSubtitle) authSubtitle.textContent = 'Get started with Dexter HiTech CRM.';
+    } else {
+      if (signinTab) signinTab.classList.add('active');
+      if (signupTab) signupTab.classList.remove('active');
+      if (loginForm) loginForm.style.display = 'grid';
+      if (signupForm) signupForm.style.display = 'none';
+      if (authTitle) authTitle.textContent = 'Welcome back.';
+      if (authSubtitle) authSubtitle.textContent = 'Sign in to manage your client operations.';
+    }
+  },
+
   // -------------------------------------------------------------------------
-  // Dashboard
+  // Dashboard View
   // -------------------------------------------------------------------------
   renderDashboard() {
     const today = new Date().toISOString().split('T')[0];
@@ -295,7 +464,7 @@ const App = {
     const so = document.getElementById('stat-overdue-invoices');
     if (so) so.textContent = overdueInvoices;
 
-    // Upcoming tasks (up to 8)
+    // Upcoming tasks (up to 8, sorted by due date)
     const upcoming = State.tasks
       .filter(t => (t.status || 'To Do') !== 'Done')
       .sort((a, b) => {
@@ -317,7 +486,7 @@ const App = {
             <tr>
               <td><b>${escapeHtml(t.title)}</b><small>${escapeHtml(t.priority || 'Medium')} priority</small></td>
               <td>${escapeHtml(client ? client.name : '—')}</td>
-              <td>${escapeHtml(user ? user.full_name : 'Unassigned')}</td>
+              <td>${escapeHtml(user ? (user.full_name || user.email) : 'Unassigned')}</td>
               <td>${escapeHtml(t.due_date || '—')}</td>
               <td><span class="pill">${escapeHtml(t.status || 'To Do')}</span></td>
             </tr>
@@ -345,7 +514,7 @@ const App = {
               <div>
                 <b>${escapeHtml(client ? client.name : 'Unknown client')}</b>
                 <p>${escapeHtml(r.request)}</p>
-                <small>${escapeHtml(r.received_date || '')} · ${escapeHtml(user ? user.full_name : 'Unassigned')} · ${escapeHtml(r.status || 'New')}</small>
+                <small>${escapeHtml(r.received_date || '')} · ${escapeHtml(user ? (user.full_name || user.email) : 'Unassigned')} · ${escapeHtml(r.status || 'New')}</small>
               </div>
             </div>
           `;
@@ -355,7 +524,7 @@ const App = {
   },
 
   // -------------------------------------------------------------------------
-  // Clients Page
+  // Clients View
   // -------------------------------------------------------------------------
   renderClients() {
     this.populateSelect('client-owner-select', State.users, 'id', 'full_name', 'Unassigned');
@@ -378,7 +547,7 @@ const App = {
           <td><b>${escapeHtml(c.name)}</b><small>${escapeHtml(c.company || '—')}</small></td>
           <td>${escapeHtml(c.contact_person || '—')}<small>${escapeHtml(c.phone || c.email || '')}</small></td>
           <td>${escapeHtml(c.service || '—')}</td>
-          <td>${escapeHtml(owner ? owner.full_name : 'Unassigned')}</td>
+          <td>${escapeHtml(owner ? (owner.full_name || owner.email) : 'Unassigned')}</td>
           <td>₹${fee}</td>
           <td><span class="pill ${c.status === 'Active' ? 'active' : ''}">${escapeHtml(c.status || 'Active')}</span></td>
           <td>
@@ -397,7 +566,7 @@ const App = {
   },
 
   // -------------------------------------------------------------------------
-  // Tasks Page
+  // Tasks View
   // -------------------------------------------------------------------------
   renderTasks() {
     this.populateSelect('task-client-select', State.clients, 'id', 'name', 'Internal / none');
@@ -424,7 +593,7 @@ const App = {
         <tr>
           <td><b>${escapeHtml(t.title)}</b><small>${escapeHtml(t.description || '')}</small></td>
           <td>${escapeHtml(client ? client.name : '—')}</td>
-          <td>${escapeHtml(user ? user.full_name : 'Unassigned')}</td>
+          <td>${escapeHtml(user ? (user.full_name || user.email) : 'Unassigned')}</td>
           <td>${escapeHtml(t.due_date || '—')}</td>
           <td><span class="pill ${pClass}">${escapeHtml(t.priority || 'Medium')}</span></td>
           <td>
@@ -443,10 +612,7 @@ const App = {
   },
 
   async updateTaskStatus(taskId, newStatus) {
-    const task = State.tasks.find(t => t.id === taskId);
-    if (!task) return;
-    task.status = newStatus;
-    await Storage.saveItem('tasks', task);
+    await Storage.updateItemField('tasks', taskId, { status: newStatus });
     this.showFlash(`Task updated to ${newStatus}.`, 'success');
   },
 
@@ -458,7 +624,7 @@ const App = {
   },
 
   // -------------------------------------------------------------------------
-  // Requests Page
+  // Requests View
   // -------------------------------------------------------------------------
   renderRequests() {
     this.populateSelect('request-client-select', State.clients, 'id', 'name', 'Select client');
@@ -485,7 +651,7 @@ const App = {
           <td><b>${escapeHtml(r.request)}</b><small>${escapeHtml(r.notes || '')}</small></td>
           <td>${escapeHtml(client ? client.name : '—')}</td>
           <td>${escapeHtml(r.received_date || '—')}</td>
-          <td>${escapeHtml(user ? user.full_name : 'Unassigned')}</td>
+          <td>${escapeHtml(user ? (user.full_name || user.email) : 'Unassigned')}</td>
           <td>${escapeHtml(r.due_date || '—')}</td>
           <td>
             <form class="inline-form" onsubmit="return false;">
@@ -503,10 +669,7 @@ const App = {
   },
 
   async updateRequestStatus(rid, newStatus) {
-    const req = State.requests.find(r => r.id === rid);
-    if (!req) return;
-    req.status = newStatus;
-    await Storage.saveItem('requests', req);
+    await Storage.updateItemField('requests', rid, { status: newStatus });
     this.showFlash(`Request updated to ${newStatus}.`, 'success');
   },
 
@@ -518,7 +681,7 @@ const App = {
   },
 
   // -------------------------------------------------------------------------
-  // Billing Page
+  // Billing View
   // -------------------------------------------------------------------------
   renderBilling() {
     this.populateSelect('billing-client-select', State.clients, 'id', 'name', 'Select client');
@@ -578,7 +741,7 @@ const App = {
   },
 
   // -------------------------------------------------------------------------
-  // Team Page
+  // Team View (Admin Only)
   // -------------------------------------------------------------------------
   renderTeam() {
     const tableBody = document.getElementById('team-table-body');
@@ -586,22 +749,69 @@ const App = {
     if (countEl) countEl.textContent = `${State.users.length} accounts`;
 
     if (!tableBody) return;
-    tableBody.innerHTML = State.users.map(u => `
-      <tr>
-        <td><b>${escapeHtml(u.full_name)}</b></td>
-        <td>${escapeHtml(u.username)}</td>
-        <td><span class="pill">${escapeHtml(u.role || 'Member')}</span></td>
-      </tr>
-    `).join('');
+    if (State.users.length === 0) {
+      tableBody.innerHTML = `<tr><td colspan="4" class="empty">No team accounts yet.</td></tr>`;
+      return;
+    }
+
+    tableBody.innerHTML = State.users.map(u => {
+      const isCurrentUser = State.currentUser && State.currentUser.id === u.id;
+      return `
+        <tr>
+          <td>
+            <b>${escapeHtml(u.full_name || 'Member')}</b>
+            <small>${escapeHtml(u.email || '')}</small>
+          </td>
+          <td>${escapeHtml(u.email || u.username || '—')}</td>
+          <td><span class="pill">${escapeHtml(u.role || 'Member')}</span></td>
+          <td>
+            ${!isCurrentUser && State.currentUser && State.currentUser.role === 'Admin' ? `
+              <button class="action-btn" onclick="App.toggleUserRole('${u.id}', '${u.role === 'Admin' ? 'Member' : 'Admin'}')" style="color:#555;">
+                Make ${u.role === 'Admin' ? 'Member' : 'Admin'}
+              </button>
+            ` : '—'}
+          </td>
+        </tr>
+      `;
+    }).join('');
+  },
+
+  async toggleUserRole(userId, newRole) {
+    await Storage.updateItemField('users', userId, { role: newRole });
+    this.showFlash(`User role updated to ${newRole}.`, 'success');
+    this.renderTeam();
   },
 
   // -------------------------------------------------------------------------
-  // Account Page
+  // Account View
   // -------------------------------------------------------------------------
   renderAccount() {
     const usrEl = document.getElementById('account-username-display');
-    if (usrEl && State.currentUser) {
-      usrEl.textContent = State.currentUser.username;
+    const authMethodEl = document.getElementById('account-auth-method');
+    const pwCard = document.getElementById('password-form-card');
+
+    if (State.currentUser) {
+      if (usrEl) usrEl.textContent = State.currentUser.email || State.currentUser.full_name;
+      
+      const user = fbAuth ? fbAuth.currentUser : null;
+      const isGoogle = user && user.providerData && user.providerData.some(p => p.providerId === 'google.com');
+
+      if (authMethodEl) {
+        authMethodEl.innerHTML = isGoogle ? 
+          `<b>Signed in with Google</b> (${escapeHtml(user.email)})` : 
+          `<b>Signed in with Email & Password</b> (${escapeHtml(user.email)})`;
+      }
+
+      if (pwCard) {
+        if (isGoogle) {
+          pwCard.innerHTML = `
+            <div style="padding:15px; background:#f8f9fa; border-radius:10px; font-size:12px; color:#555;">
+              <p style="margin:0 0 6px 0;"><b>Google Account Security</b></p>
+              Your account password is secure and managed through Google. To update your credentials, please manage your Google Account directly.
+            </div>
+          `;
+        }
+      }
     }
   },
 
@@ -610,7 +820,7 @@ const App = {
   // -------------------------------------------------------------------------
   exportToExcel() {
     if (typeof XLSX === 'undefined') {
-      alert("Excel generator library is still loading. Please try again.");
+      alert("Excel generator library is loading. Please try again.");
       return;
     }
 
@@ -632,8 +842,8 @@ const App = {
     State.billing.forEach(b => billData.push([b.id, b.client_id || '', b.invoice_no || '', b.billing_month || '', Number(b.amount || 0), b.invoice_date || '', b.due_date || '', b.payment_date || '', b.status || '', b.notes || '']));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(billData), 'Billing');
 
-    const teamData = [['id', 'username', 'full_name', 'role', 'created_at']];
-    State.users.forEach(u => teamData.push([u.id, u.username, u.full_name, u.role || 'Member', u.created_at || '']));
+    const teamData = [['id', 'email', 'full_name', 'role', 'created_at']];
+    State.users.forEach(u => teamData.push([u.id, u.email || '', u.full_name || '', u.role || 'Member', u.created_at || '']));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(teamData), 'Team');
 
     const todayStr = new Date().toISOString().split('T')[0];
@@ -647,36 +857,85 @@ const App = {
     const currentVal = el.value;
     let html = `<option value="">${defaultLabel}</option>`;
     items.forEach(item => {
-      html += `<option value="${item[valKey]}">${escapeHtml(item[textKey])}</option>`;
+      const text = item[textKey] || item.email || item.username || item.id;
+      html += `<option value="${item[valKey]}">${escapeHtml(text)}</option>`;
     });
     el.innerHTML = html;
     if (currentVal) el.value = currentVal;
   },
 
   bindEvents() {
-    // Login Form
+    // 1. Email Sign In Form
     const loginForm = document.getElementById('login-form');
     if (loginForm) {
       loginForm.addEventListener('submit', async e => {
         e.preventDefault();
-        const u = document.getElementById('login-username').value;
-        const p = document.getElementById('login-password').value;
+        const email = document.getElementById('login-email').value;
+        const pass = document.getElementById('login-password').value;
         const errEl = document.getElementById('login-error');
+        const btn = document.getElementById('signin-submit-btn');
         if (errEl) errEl.style.display = 'none';
 
         try {
-          await Auth.login(u, p);
+          if (btn) { btn.disabled = true; btn.textContent = 'Signing in...'; }
+          await Auth.loginWithEmail(email, pass);
           window.location.href = 'index.html';
         } catch (err) {
+          if (btn) { btn.disabled = false; btn.innerHTML = 'Sign in <span>→</span>'; }
           if (errEl) {
-            errEl.textContent = err.message;
+            let msg = err.message;
+            if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+              msg = 'Invalid email or password. Please try again.';
+            }
+            errEl.textContent = msg;
             errEl.style.display = 'block';
           }
         }
       });
     }
 
-    // Client Form
+    // 2. Email Sign Up Form
+    const signupForm = document.getElementById('signup-form');
+    if (signupForm) {
+      signupForm.addEventListener('submit', async e => {
+        e.preventDefault();
+        const name = document.getElementById('signup-name').value;
+        const email = document.getElementById('signup-email').value;
+        const pass = document.getElementById('signup-password').value;
+        const confirmPass = document.getElementById('signup-confirm-password').value;
+        const errEl = document.getElementById('login-error');
+        const btn = document.getElementById('signup-submit-btn');
+        if (errEl) errEl.style.display = 'none';
+
+        if (pass !== confirmPass) {
+          if (errEl) {
+            errEl.textContent = 'Passwords do not match.';
+            errEl.style.display = 'block';
+          }
+          return;
+        }
+
+        try {
+          if (btn) { btn.disabled = true; btn.textContent = 'Creating account...'; }
+          await Auth.signUpWithEmail(email, pass, name);
+          window.location.href = 'index.html';
+        } catch (err) {
+          if (btn) { btn.disabled = false; btn.innerHTML = 'Create account <span>→</span>'; }
+          if (errEl) {
+            let msg = err.message;
+            if (err.code === 'auth/email-already-in-use') {
+              msg = 'An account with this email already exists. Please sign in instead.';
+            } else if (err.code === 'auth/weak-password') {
+              msg = 'Password should be at least 6 characters.';
+            }
+            errEl.textContent = msg;
+            errEl.style.display = 'block';
+          }
+        }
+      });
+    }
+
+    // 3. Client Form
     const clientForm = document.getElementById('client-form');
     if (clientForm) {
       clientForm.addEventListener('submit', async e => {
@@ -702,7 +961,7 @@ const App = {
       });
     }
 
-    // Task Form
+    // 4. Task Form
     const taskForm = document.getElementById('task-form');
     if (taskForm) {
       taskForm.addEventListener('submit', async e => {
@@ -724,7 +983,7 @@ const App = {
       });
     }
 
-    // Request Form
+    // 5. Request Form
     const reqForm = document.getElementById('request-form');
     if (reqForm) {
       const today = new Date().toISOString().split('T')[0];
@@ -751,7 +1010,7 @@ const App = {
       });
     }
 
-    // Billing Form
+    // 6. Billing Form
     const billForm = document.getElementById('billing-form');
     if (billForm) {
       billForm.addEventListener('submit', async e => {
@@ -775,34 +1034,31 @@ const App = {
       });
     }
 
-    // Team Form
+    // 7. Team Invitation Form
     const teamForm = document.getElementById('team-form');
     if (teamForm) {
       teamForm.addEventListener('submit', async e => {
         e.preventDefault();
         const f = teamForm.elements;
-        const username = f.username.value.trim();
-        const exists = State.users.some(u => u.username.toLowerCase() === username.toLowerCase());
-        if (exists) {
-          App.showFlash('That username already exists.', 'error');
-          return;
-        }
+        const email = f.username.value.trim();
+        const fullName = f.full_name.value.trim();
+        const role = f.role.value || 'Member';
 
-        const newUser = {
-          full_name: f.full_name.value.trim(),
-          username: username,
-          password: f.password.value,
-          role: f.role.value || 'Member'
+        const newMember = {
+          email: email,
+          full_name: fullName,
+          role: role,
+          created_at: new Date().toISOString()
         };
 
-        await Storage.saveItem('users', newUser);
+        await Storage.saveItem('users', newMember);
         teamForm.reset();
-        App.showFlash('Team account created.', 'success');
+        App.showFlash(`Team member added. They can now sign in with ${email} using Google or Email.`, 'success');
         App.renderTeam();
       });
     }
 
-    // Account Form
+    // 8. Password Update Form
     const pwForm = document.getElementById('password-form');
     if (pwForm) {
       pwForm.addEventListener('submit', async e => {

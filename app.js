@@ -125,9 +125,14 @@ const Auth = {
     try {
       if (typeof fbDb !== 'undefined' && fbDb) {
         const docRef = fbDb.collection('users').doc(uid);
-        const snap = await docRef.get();
+        let snap = null;
+        try {
+          snap = await docRef.get();
+        } catch (getErr) {
+          console.warn('[Auth] docRef.get note (Firestore database may not exist yet or rules blocked):', getErr.code || getErr.message);
+        }
 
-        if (snap.exists) {
+        if (snap && snap.exists) {
           profile = { id: uid, ...snap.data() };
           // If super admin, enforce Admin & Active status unconditionally
           if (isSuperAdmin) {
@@ -236,8 +241,13 @@ const Auth = {
         photoURL: photoURL,
         role: isSuperAdmin ? 'Admin' : 'Member',
         status: isSuperAdmin ? 'Active' : 'Pending',
-        approved: isSuperAdmin
+        approved: isSuperAdmin,
+        created_at: new Date().toISOString()
       };
+
+      if (!isSuperAdmin && profile.status === 'Pending') {
+        this.notifyAdminNewUser(profile);
+      }
     }
 
     State.currentUser = profile;
@@ -1714,6 +1724,9 @@ const App = {
       this._adminListenerAttached = true;
       try {
         fbDb.collection('users').onSnapshot(snap => {
+          const dbWarning = document.getElementById('firestore-setup-alert');
+          if (dbWarning) dbWarning.style.display = 'none';
+
           const cloudUsers = [];
           snap.forEach(doc => {
             cloudUsers.push({ id: doc.id, ...doc.data() });
@@ -1725,8 +1738,15 @@ const App = {
             this.renderAdminUsersTable();
             this.checkAndTriggerPendingPopups();
           }
-        }, err => console.warn("Admin realtime note:", err));
-      } catch (e) {}
+        }, err => {
+          console.warn("Admin realtime note:", err);
+          const dbWarning = document.getElementById('firestore-setup-alert');
+          if (dbWarning) dbWarning.style.display = 'flex';
+        });
+      } catch (e) {
+        const dbWarning = document.getElementById('firestore-setup-alert');
+        if (dbWarning) dbWarning.style.display = 'flex';
+      }
     }
   },
 

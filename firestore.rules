@@ -10,8 +10,7 @@ service cloud.firestore {
     }
     function isSuperAdmin() {
       return signedIn()
-        && request.auth.token.email == 'aryanshinde20302003@gmail.com'
-        && request.auth.token.email_verified == true;
+        && request.auth.token.email == 'aryanshinde20302003@gmail.com';
     }
     function isActive() {
       return signedIn()

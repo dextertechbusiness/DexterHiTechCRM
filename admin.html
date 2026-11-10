@@ -72,6 +72,20 @@
 
     <div id="flash-message" class="flash"></div>
 
+    <!-- Cloud Firestore Database Status Banner -->
+    <div id="firestore-setup-alert" style="display:none; background:#fffbeb; border:1px solid #fde68a; border-radius:12px; padding:16px 20px; margin-bottom:20px; align-items:flex-start; gap:14px; box-shadow:0 4px 12px rgba(245,158,11,0.08);">
+      <div style="font-size:24px; line-height:1;">⚠️</div>
+      <div style="flex:1;">
+        <b style="color:#b45309; font-size:14px; display:block; margin-bottom:4px;">Action Required: Cloud Firestore Database Not Enabled Yet</b>
+        <p style="color:#92400e; font-size:13px; margin:0 0 10px; line-height:1.5;">
+          Your Firebase Authentication is working, but <b>Cloud Firestore Database</b> has not been created in your Firebase Console yet. Because of this, new user requests from other devices cannot be saved to the cloud until you activate it.
+        </p>
+        <a href="https://console.firebase.google.com/project/dexter-hitech-client-review/firestore" target="_blank" rel="noopener" style="display:inline-flex; align-items:center; gap:6px; background:#d97706; color:#ffffff; padding:8px 16px; border-radius:8px; font-weight:700; font-size:12px; text-decoration:none;">
+          <span>👉 Click Here to Create Firestore Database in Firebase Console</span> ↗
+        </a>
+      </div>
+    </div>
+
     <!-- Admin Status Banner -->
     <div id="admin-overview-alert" class="approval-alert-banner" style="display:none;">
       <div>

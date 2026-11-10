@@ -1,0 +1,15 @@
+# Private Environment Variables
+.env
+!.env.example
+
+# Local databases and caches
+*.db
+*.sqlite3
+.venv/
+__pycache__/
+
+# OS and Editor configs
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -1,6 +1,7 @@
 /**
  * Dexter HiTech CRM - Core Application Engine
- * Secured with Firebase Authentication (Email/Password + Google) & Cloud Firestore
+ * Secured with Firebase Authentication (Email/Password + Google),
+ * Cloud Firestore, Admin Approval Workflow & Domain Authorization Helper.
  */
 
 const State = {
@@ -9,11 +10,12 @@ const State = {
   clients: [],
   tasks: [],
   requests: [],
-  billing: []
+  billing: [],
+  pendingUsers: []
 };
 
 // ---------------------------------------------------------------------------
-// 1. Firebase Authentication Service
+// 1. Firebase Authentication & Approval Service
 // ---------------------------------------------------------------------------
 const Auth = {
   init() {
@@ -25,21 +27,40 @@ const Auth = {
       return;
     }
 
-    // Real-time Auth State Listener
+    // Real-time Auth State Observer
     fbAuth.onAuthStateChanged(async (firebaseUser) => {
       if (firebaseUser) {
-        console.log("[Auth] User authenticated:", firebaseUser.email || firebaseUser.displayName);
+        console.log("[Auth] Active session found for:", firebaseUser.email || firebaseUser.displayName);
         
-        // 1. Load or initialize user profile in Firestore
-        await this.syncUserProfile(firebaseUser);
+        // 1. Sync or create user profile with approval status
+        const userProfile = await this.syncUserProfile(firebaseUser);
 
-        // 2. If already on login page, redirect to dashboard
+        // 2. Check Approval Status
+        if (userProfile.status === 'Pending') {
+          console.warn("[Auth] Account approval is pending for:", userProfile.email);
+          if (isLoginPage) {
+            // Stay on login page and show pending notice
+            App.showPendingApprovalState(userProfile);
+          } else {
+            // Show full-page approval required overlay
+            App.showApprovalPendingOverlay(userProfile);
+          }
+          return;
+        }
+
+        if (userProfile.status === 'Rejected') {
+          alert("Your access request was declined by the administrator. Please contact your workspace admin.");
+          this.logout();
+          return;
+        }
+
+        // 3. User is Active & Approved!
         if (isLoginPage) {
           window.location.href = 'index.html';
           return;
         }
 
-        // 3. User is authorized on internal pages
+        // Render authorized page
         App.onUserAuthenticated();
 
       } else {
@@ -66,13 +87,19 @@ const Auth = {
       if (typeof fbDb !== 'undefined' && fbDb) {
         const docRef = fbDb.collection('users').doc(uid);
         const snap = await docRef.get();
+
         if (snap.exists) {
           profile = { id: uid, ...snap.data() };
         } else {
-          // If first user, make Admin; otherwise Member
-          const allUsers = await fbDb.collection('users').get();
-          const role = (allUsers.empty || allUsers.size === 0) ? 'Admin' : 'Member';
+          // Brand new user registration
+          const allUsersSnap = await fbDb.collection('users').get();
+          const isFirstUser = (allUsersSnap.empty || allUsersSnap.size === 0);
           
+          // First user or workspace owner is automatically Admin and Active
+          const isOwner = isFirstUser || (email.toLowerCase().includes('admin') || email.toLowerCase().includes('dextertech'));
+          const role = isOwner ? 'Admin' : 'Member';
+          const status = isOwner ? 'Active' : 'Pending';
+
           profile = {
             id: uid,
             uid: uid,
@@ -80,9 +107,17 @@ const Auth = {
             full_name: name,
             photoURL: photoURL,
             role: role,
+            status: status,
+            approved: isOwner,
             created_at: new Date().toISOString()
           };
+
           await docRef.set(profile);
+
+          // If new user requires approval, trigger admin email notification!
+          if (status === 'Pending') {
+            this.notifyAdminNewUser(profile);
+          }
         }
       }
     } catch (err) {
@@ -96,12 +131,59 @@ const Auth = {
         email: email,
         full_name: name,
         photoURL: photoURL,
-        role: 'Admin'
+        role: 'Admin',
+        status: 'Active',
+        approved: true
       };
     }
 
     State.currentUser = profile;
     sessionStorage.setItem('dexter_session', JSON.stringify(profile));
+    return profile;
+  },
+
+  // Notify Workspace Admin via Email when a new user registers
+  async notifyAdminNewUser(newUser) {
+    try {
+      let adminEmail = 'business@dextertech.com';
+      if (typeof fbDb !== 'undefined' && fbDb) {
+        const adminSnap = await fbDb.collection('users').where('role', '==', 'Admin').limit(1).get();
+        if (!adminSnap.empty) {
+          const doc = adminSnap.docs[0].data();
+          if (doc.email) adminEmail = doc.email;
+        }
+
+        // Record in Firestore notifications
+        await fbDb.collection('notifications').add({
+          type: 'user_approval_request',
+          userId: newUser.id,
+          userEmail: newUser.email,
+          userName: newUser.full_name,
+          adminEmail: adminEmail,
+          created_at: new Date().toISOString(),
+          status: 'pending'
+        });
+      }
+
+      // Send automated email via FormSubmit AJAX (Free, zero setup)
+      fetch('https://formsubmit.co/ajax/' + encodeURIComponent(adminEmail), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          _subject: `[Dexter HiTech CRM] New User Access Request: ${newUser.full_name}`,
+          'User Name': newUser.full_name,
+          'User Email': newUser.email,
+          'Registration Time': new Date().toLocaleString(),
+          'Action Needed': 'A new user has registered for Dexter HiTech CRM. Please log in and approve them under Team access.'
+        })
+      }).catch(err => console.warn("[Notify] Email notification note:", err));
+
+    } catch (e) {
+      console.warn("[Notify] Notification dispatch note:", e);
+    }
   },
 
   async loginWithEmail(email, password) {
@@ -113,8 +195,8 @@ const Auth = {
     if (fullName && cred.user) {
       await cred.user.updateProfile({ displayName: fullName.trim() });
     }
-    await this.syncUserProfile(cred.user);
-    return cred.user;
+    const profile = await this.syncUserProfile(cred.user);
+    return profile;
   },
 
   async loginWithGoogle() {
@@ -127,12 +209,23 @@ const Auth = {
       provider.addScope('profile');
       
       const result = await fbAuth.signInWithPopup(provider);
-      await this.syncUserProfile(result.user);
-      window.location.href = 'index.html';
+      const profile = await this.syncUserProfile(result.user);
+
+      if (profile.status === 'Pending') {
+        App.showPendingApprovalState(profile);
+      } else {
+        window.location.href = 'index.html';
+      }
     } catch (err) {
       console.error("[Auth] Google Sign-in Error:", err);
+      
+      // Specifically handle auth/unauthorized-domain
+      if (err.code === 'auth/unauthorized-domain') {
+        App.showUnauthorizedDomainModal(window.location.hostname);
+        return;
+      }
+      
       if (err.code === 'auth/popup-blocked') {
-        // Fallback to redirect if popup was blocked by browser
         const provider = new firebase.auth.GoogleAuthProvider();
         fbAuth.signInWithRedirect(provider);
       } else if (errEl) {
@@ -160,7 +253,7 @@ const Auth = {
 
     try {
       await fbAuth.sendPasswordResetEmail(targetEmail);
-      alert(`Password reset email sent to ${targetEmail}. Please check your inbox.`);
+      alert(`Password reset link sent to ${targetEmail}. Please check your inbox.`);
     } catch (err) {
       alert("Error: " + err.message);
     }
@@ -174,7 +267,6 @@ const Auth = {
       throw new Error("Your account is managed via Google Sign-In. Password updates are managed through your Google Account.");
     }
 
-    // Re-authenticate if possible
     if (currentPassword && user.email) {
       const cred = firebase.auth.EmailAuthProvider.credential(user.email, currentPassword);
       await user.reauthenticateWithCredential(cred);
@@ -215,7 +307,10 @@ const Storage = {
         this.fetchCollection('billing')
       ]);
 
-      // Re-render active view with latest cloud data
+      // Calculate pending user approvals
+      State.pendingUsers = State.users.filter(u => u.status === 'Pending');
+
+      App.updatePendingBadges();
       App.renderCurrentPage();
       console.log("[Firebase] Firestore data synchronized.");
     } catch (err) {
@@ -301,7 +396,123 @@ const App = {
     Storage.syncWithFirestore();
   },
 
-  // Mobile Drawer Setup
+  // Update Pending Badges on Sidebar & Alert Banners
+  updatePendingBadges() {
+    const pending = State.users.filter(u => u.status === 'Pending');
+    const badge = document.getElementById('pending-nav-badge');
+    if (badge) {
+      if (pending.length > 0 && State.currentUser && State.currentUser.role === 'Admin') {
+        badge.textContent = pending.length;
+        badge.style.display = 'inline-block';
+      } else {
+        badge.style.display = 'none';
+      }
+    }
+
+    const alertBanner = document.getElementById('admin-pending-alert');
+    const alertText = document.getElementById('admin-pending-text');
+    if (alertBanner && alertText) {
+      if (pending.length > 0 && State.currentUser && State.currentUser.role === 'Admin') {
+        alertText.textContent = `${pending.length} team member(s) waiting for access approval.`;
+        alertBanner.style.display = 'flex';
+      } else {
+        alertBanner.style.display = 'none';
+      }
+    }
+  },
+
+  // Modal when domain is not authorized in Firebase Console
+  showUnauthorizedDomainModal(domain) {
+    const existing = document.getElementById('unauthorized-domain-modal');
+    if (existing) existing.remove();
+
+    const isLocalIP = (domain === '127.0.0.1');
+    const modal = document.createElement('div');
+    modal.id = 'unauthorized-domain-modal';
+    modal.className = 'domain-modal-overlay';
+    modal.innerHTML = `
+      <div class="domain-modal">
+        <h3>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+          </svg>
+          Authorize Domain in Firebase Console
+        </h3>
+        <p style="color:#475569; margin: 8px 0 14px;">
+          Firebase requires this domain to be added to your <b>Authorized Domains</b> list before Google Sign-In can work:
+        </p>
+        
+        <div class="domain-badge">
+          <span id="domain-text">${escapeHtml(domain)}</span>
+          <button type="button" class="copy-btn" onclick="navigator.clipboard.writeText('${escapeHtml(domain)}'); this.textContent = 'Copied!'; setTimeout(() => this.textContent = 'Copy', 2000)">Copy</button>
+        </div>
+
+        <ol class="domain-steps">
+          <li>Open <a href="https://console.firebase.google.com/project/dexter-hitech-client-review/authentication/settings" target="_blank" rel="noopener">Firebase Console → Authentication → Settings ↗</a></li>
+          <li>Under <b>Authorized domains</b>, click <b>Add domain</b></li>
+          <li>Paste <b>${escapeHtml(domain)}</b> and click <b>Save</b></li>
+        </ol>
+
+        ${isLocalIP ? `
+          <div style="background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px; padding:10px 12px; margin: 12px 0; color:#1e40af; font-size:12px;">
+            💡 <b>Localhost Tip:</b> Firebase authorizes <code>localhost</code> by default. If testing locally, open <a href="http://localhost:5000/login.html" style="color:#1d4ed8; font-weight:700;">http://localhost:...</a> instead of 127.0.0.1!
+          </div>
+        ` : ''}
+
+        <p style="font-size:12px; color:#64748b; margin: 12px 0 18px;">
+          <b>Alternative:</b> You can also sign in with <b>Email & Password</b> right now without waiting for domain configuration.
+        </p>
+
+        <div style="display:flex; justify-content:flex-end;">
+          <button type="button" class="primary small-btn" onclick="document.getElementById('unauthorized-domain-modal').remove()">Got it, close</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+  },
+
+  // Full-page Approval Required screen for pending users
+  showApprovalPendingOverlay(user) {
+    const existing = document.getElementById('pending-approval-overlay');
+    if (existing) return;
+
+    const overlay = document.createElement('div');
+    overlay.id = 'pending-approval-overlay';
+    overlay.className = 'approval-overlay-view';
+    overlay.innerHTML = `
+      <div class="approval-card">
+        <div class="approval-icon-badge">⏳</div>
+        <h2>Access Approval Pending</h2>
+        <div class="approval-user-info">${escapeHtml(user.full_name || user.email)}</div>
+        <p>
+          Your account has been registered successfully. For security, all team accounts require administrator approval before gaining access to the CRM workspace.<br><br>
+          An automated notification has been dispatched to the administrator. Once approved, your access will be activated immediately.
+        </p>
+        <div class="approval-actions">
+          <button class="primary" onclick="window.location.reload()">Check Status (Refresh) ↻</button>
+          <button class="btn-secondary" onclick="Auth.logout()">Sign out ↗</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+  },
+
+  // Show pending state on login page
+  showPendingApprovalState(user) {
+    const succEl = document.getElementById('login-success');
+    const errEl = document.getElementById('login-error');
+    if (errEl) errEl.style.display = 'none';
+
+    if (succEl) {
+      succEl.innerHTML = `
+        <b>⏳ Account Pending Approval:</b><br>
+        Your account (${escapeHtml(user.email)}) has been registered. The administrator has been notified. You will be able to sign in as soon as your access is approved.
+      `;
+      succEl.style.display = 'block';
+    }
+  },
+
+  // Setup Mobile Drawer
   setupMobileDrawer() {
     const toggleBtn = document.getElementById('mobile-menu-toggle');
     const sidebar = document.querySelector('.sidebar');
@@ -322,7 +533,6 @@ const App = {
       overlay.addEventListener('click', closeDrawer);
       if (closeBtn) closeBtn.addEventListener('click', closeDrawer);
 
-      // Close drawer when any nav link is tapped
       sidebar.querySelectorAll('.nav').forEach(link => {
         link.addEventListener('click', closeDrawer);
       });
@@ -371,7 +581,6 @@ const App = {
     const role = document.getElementById('user-role');
     if (role) role.textContent = user.role || 'Member';
 
-    // Show/hide admin-only nav items
     const teamNav = document.getElementById('nav-team');
     if (teamNav) teamNav.style.display = user.role === 'Admin' ? 'flex' : 'none';
 
@@ -390,7 +599,7 @@ const App = {
     clearTimeout(this._flashTimer);
     this._flashTimer = setTimeout(() => {
       el.className = 'flash';
-    }, 4000);
+    }, 4500);
   },
 
   renderCurrentPage() {
@@ -413,7 +622,6 @@ const App = {
     }
   },
 
-  // Switch between Sign in and Create account in login.html
   switchAuthTab(tab) {
     const signinTab = document.getElementById('tab-signin');
     const signupTab = document.getElementById('tab-signup');
@@ -433,7 +641,7 @@ const App = {
       if (loginForm) loginForm.style.display = 'none';
       if (signupForm) signupForm.style.display = 'grid';
       if (authTitle) authTitle.textContent = 'Create your account';
-      if (authSubtitle) authSubtitle.textContent = 'Get started with Dexter HiTech CRM.';
+      if (authSubtitle) authSubtitle.textContent = 'Request access to Dexter HiTech CRM.';
     } else {
       if (signinTab) signinTab.classList.add('active');
       if (signupTab) signupTab.classList.remove('active');
@@ -521,6 +729,8 @@ const App = {
         }).join('');
       }
     }
+
+    this.updatePendingBadges();
   },
 
   // -------------------------------------------------------------------------
@@ -741,21 +951,30 @@ const App = {
   },
 
   // -------------------------------------------------------------------------
-  // Team View (Admin Only)
+  // Team View (Admin Only) with Approval Requests
   // -------------------------------------------------------------------------
   renderTeam() {
+    this.renderPendingApprovals();
+
     const tableBody = document.getElementById('team-table-body');
     const countEl = document.getElementById('team-count');
-    if (countEl) countEl.textContent = `${State.users.length} accounts`;
+
+    // Approved or Active users
+    const approvedUsers = State.users.filter(u => u.status !== 'Pending');
+    if (countEl) countEl.textContent = `${approvedUsers.length} active accounts`;
 
     if (!tableBody) return;
-    if (State.users.length === 0) {
-      tableBody.innerHTML = `<tr><td colspan="4" class="empty">No team accounts yet.</td></tr>`;
+    if (approvedUsers.length === 0) {
+      tableBody.innerHTML = `<tr><td colspan="5" class="empty">No team accounts yet.</td></tr>`;
       return;
     }
 
-    tableBody.innerHTML = State.users.map(u => {
+    tableBody.innerHTML = approvedUsers.map(u => {
       const isCurrentUser = State.currentUser && State.currentUser.id === u.id;
+      const statusPill = u.status === 'Active' ? 
+        '<span class="pill paid">Active</span>' : 
+        `<span class="pill ${u.status === 'Rejected' ? 'late' : 'pending'}">${escapeHtml(u.status || 'Active')}</span>`;
+
       return `
         <tr>
           <td>
@@ -763,6 +982,7 @@ const App = {
             <small>${escapeHtml(u.email || '')}</small>
           </td>
           <td>${escapeHtml(u.email || u.username || '—')}</td>
+          <td>${statusPill}</td>
           <td><span class="pill">${escapeHtml(u.role || 'Member')}</span></td>
           <td>
             ${!isCurrentUser && State.currentUser && State.currentUser.role === 'Admin' ? `
@@ -774,6 +994,81 @@ const App = {
         </tr>
       `;
     }).join('');
+  },
+
+  // Render Pending Access Approvals in Team Page
+  renderPendingApprovals() {
+    const panel = document.getElementById('pending-approvals-panel');
+    const tbody = document.getElementById('pending-table-body');
+    const countSpan = document.getElementById('pending-count');
+    const pending = State.users.filter(u => u.status === 'Pending');
+
+    if (!panel || !tbody) return;
+
+    if (pending.length === 0 || !State.currentUser || State.currentUser.role !== 'Admin') {
+      panel.style.display = 'none';
+      return;
+    }
+
+    panel.style.display = 'block';
+    if (countSpan) countSpan.textContent = pending.length;
+
+    tbody.innerHTML = pending.map(u => `
+      <tr>
+        <td>
+          <b>${escapeHtml(u.full_name || 'New User')}</b>
+          <small>ID: ${escapeHtml(u.id)}</small>
+        </td>
+        <td>${escapeHtml(u.email || '—')}</td>
+        <td>${escapeHtml(u.created_at ? new Date(u.created_at).toLocaleDateString() : 'Just now')}</td>
+        <td>
+          <button type="button" class="approve-btn" onclick="App.approveUser('${u.id}')">✓ Approve Access</button>
+          <button type="button" class="reject-btn" onclick="App.rejectUser('${u.id}')">✕ Decline</button>
+        </td>
+      </tr>
+    `).join('');
+  },
+
+  // Admin approves a pending user
+  async approveUser(userId) {
+    const user = State.users.find(u => u.id === userId);
+    const userEmail = user ? user.email : '';
+    const userName = user ? user.full_name : 'Team Member';
+
+    await Storage.updateItemField('users', userId, {
+      status: 'Active',
+      approved: true,
+      approved_at: new Date().toISOString(),
+      approved_by: State.currentUser ? State.currentUser.email : 'Admin'
+    });
+
+    // Notify approved user via email
+    if (userEmail) {
+      fetch('https://formsubmit.co/ajax/' + encodeURIComponent(userEmail), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({
+          _subject: `[Dexter HiTech CRM] Your Access Has Been Approved!`,
+          'Status': 'Access Granted',
+          'Message': `Hello ${userName}, your access request for Dexter HiTech CRM has been approved by the administrator. You can now sign in at any time.`
+        })
+      }).catch(() => {});
+    }
+
+    this.showFlash(`User ${userEmail} approved successfully. They now have access.`, 'success');
+    Storage.syncWithFirestore();
+  },
+
+  // Admin declines a user request
+  async rejectUser(userId) {
+    if (!confirm('Are you sure you want to decline access for this user?')) return;
+    await Storage.updateItemField('users', userId, {
+      status: 'Rejected',
+      approved: false,
+      rejected_at: new Date().toISOString()
+    });
+    this.showFlash('Access request declined.', 'error');
+    Storage.syncWithFirestore();
   },
 
   async toggleUserRole(userId, newRole) {
@@ -842,8 +1137,8 @@ const App = {
     State.billing.forEach(b => billData.push([b.id, b.client_id || '', b.invoice_no || '', b.billing_month || '', Number(b.amount || 0), b.invoice_date || '', b.due_date || '', b.payment_date || '', b.status || '', b.notes || '']));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(billData), 'Billing');
 
-    const teamData = [['id', 'email', 'full_name', 'role', 'created_at']];
-    State.users.forEach(u => teamData.push([u.id, u.email || '', u.full_name || '', u.role || 'Member', u.created_at || '']));
+    const teamData = [['id', 'email', 'full_name', 'status', 'role', 'created_at']];
+    State.users.forEach(u => teamData.push([u.id, u.email || '', u.full_name || '', u.status || 'Active', u.role || 'Member', u.created_at || '']));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(teamData), 'Team');
 
     const todayStr = new Date().toISOString().split('T')[0];
@@ -886,6 +1181,9 @@ const App = {
             let msg = err.message;
             if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
               msg = 'Invalid email or password. Please try again.';
+            } else if (err.code === 'auth/unauthorized-domain') {
+              App.showUnauthorizedDomainModal(window.location.hostname);
+              return;
             }
             errEl.textContent = msg;
             errEl.style.display = 'block';
@@ -917,8 +1215,14 @@ const App = {
 
         try {
           if (btn) { btn.disabled = true; btn.textContent = 'Creating account...'; }
-          await Auth.signUpWithEmail(email, pass, name);
-          window.location.href = 'index.html';
+          const userProfile = await Auth.signUpWithEmail(email, pass, name);
+
+          if (userProfile && userProfile.status === 'Pending') {
+            App.showPendingApprovalState(userProfile);
+            if (btn) { btn.disabled = false; btn.innerHTML = 'Create account <span>→</span>'; }
+          } else {
+            window.location.href = 'index.html';
+          }
         } catch (err) {
           if (btn) { btn.disabled = false; btn.innerHTML = 'Create account <span>→</span>'; }
           if (errEl) {
@@ -927,6 +1231,9 @@ const App = {
               msg = 'An account with this email already exists. Please sign in instead.';
             } else if (err.code === 'auth/weak-password') {
               msg = 'Password should be at least 6 characters.';
+            } else if (err.code === 'auth/unauthorized-domain') {
+              App.showUnauthorizedDomainModal(window.location.hostname);
+              return;
             }
             errEl.textContent = msg;
             errEl.style.display = 'block';
@@ -1034,7 +1341,7 @@ const App = {
       });
     }
 
-    // 7. Team Invitation Form
+    // 7. Team Pre-authorization Form
     const teamForm = document.getElementById('team-form');
     if (teamForm) {
       teamForm.addEventListener('submit', async e => {
@@ -1048,17 +1355,19 @@ const App = {
           email: email,
           full_name: fullName,
           role: role,
+          status: 'Active', // Pre-authorized by Admin
+          approved: true,
           created_at: new Date().toISOString()
         };
 
         await Storage.saveItem('users', newMember);
         teamForm.reset();
-        App.showFlash(`Team member added. They can now sign in with ${email} using Google or Email.`, 'success');
-        App.renderTeam();
+        App.showFlash(`Team member pre-approved: ${email}. They can now sign in with Google or Email.`, 'success');
+        Storage.syncWithFirestore();
       });
     }
 
-    // 8. Password Update Form
+    // 8. Password Form
     const pwForm = document.getElementById('password-form');
     if (pwForm) {
       pwForm.addEventListener('submit', async e => {

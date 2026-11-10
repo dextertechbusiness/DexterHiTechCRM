@@ -39,7 +39,7 @@
     <a class="nav" href="billing.html" id="nav-billing">▤ &nbsp; Billing</a>
 
     <div class="nav-label team-label" id="team-nav-header">ADMINISTRATION</div>
-    <a class="nav" href="team.html" id="nav-team">♧ &nbsp; Team access</a>
+    <a class="nav" href="team.html" id="nav-team">♧ &nbsp; Team access <span class="nav-badge" id="pending-nav-badge" style="display:none;">0</span></a>
 
     <div class="sidebar-bottom">
       <div class="user-chip">
@@ -70,15 +70,40 @@
     <div id="flash-message" class="flash"></div>
 
     <div class="page-intro">
-      <p>Manage team member access and permissions. Team members can sign in with Google or their email address.</p>
+      <p>Manage team member access and approvals. New users require administrator approval before gaining access.</p>
     </div>
 
-    <!-- Add Team Member Form -->
+    <!-- Pending Access Requests Panel (Shown when pending requests exist) -->
+    <section class="panel" id="pending-approvals-panel" style="display:none; border: 1px solid #fde68a; background: rgba(254, 252, 232, 0.75);">
+      <div class="panel-head">
+        <div>
+          <h3 style="color:#b45309;">⏳ Pending Access Requests (<span id="pending-count">0</span>)</h3>
+          <p>The following users have registered and are waiting for your approval to enter the workspace.</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>USER</th>
+              <th>EMAIL</th>
+              <th>REQUESTED ON</th>
+              <th>ACTION</th>
+            </tr>
+          </thead>
+          <tbody id="pending-table-body">
+            <!-- Populated via JS -->
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Pre-authorize / Add Team Member Form -->
     <section class="panel form-panel">
       <div class="panel-head">
         <div>
-          <h3>Add / Invite team member</h3>
-          <p>Register team access for an email address.</p>
+          <h3>Pre-authorize team member</h3>
+          <p>Pre-approve an email address so they can sign in immediately without waiting.</p>
         </div>
       </div>
       <form id="team-form" class="form-grid">
@@ -95,7 +120,7 @@
           </select>
         </label>
         <div class="form-submit">
-          <button type="submit" class="primary">Add team member →</button>
+          <button type="submit" class="primary">Pre-authorize member →</button>
         </div>
       </form>
     </section>
@@ -114,12 +139,13 @@
             <tr>
               <th>TEAM MEMBER</th>
               <th>EMAIL</th>
+              <th>STATUS</th>
               <th>ACCESS ROLE</th>
               <th>ACTION</th>
             </tr>
           </thead>
           <tbody id="team-table-body">
-            <tr><td colspan="4" class="empty">No team accounts yet.</td></tr>
+            <tr><td colspan="5" class="empty">No team accounts yet.</td></tr>
           </tbody>
         </table>
       </div>

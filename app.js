@@ -235,6 +235,18 @@ const Auth = {
 
     State.currentUser = profile;
     sessionStorage.setItem('dexter_session', JSON.stringify(profile));
+
+    // Ensure authenticated user is registered in State.users and localStorage
+    const curUsers = JSON.parse(localStorage.getItem('dexter_users') || '[]');
+    const userIdx = curUsers.findIndex(u => u.id === profile.id || (u.email && u.email.toLowerCase() === profile.email.toLowerCase()));
+    if (userIdx >= 0) {
+      curUsers[userIdx] = Object.assign({}, curUsers[userIdx], profile);
+    } else {
+      curUsers.unshift(profile);
+    }
+    State.users = curUsers;
+    localStorage.setItem('dexter_users', JSON.stringify(curUsers));
+
     return profile;
   },
 
@@ -985,7 +997,7 @@ const App = {
 
     if (!panel || !tbody) return;
 
-    const isSuperAdmin = State.currentUser && (
+    const isSuperAdmin = !State.currentUser || (
       (State.currentUser.email || '').toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() ||
       State.currentUser.role === 'Admin'
     );
@@ -994,13 +1006,24 @@ const App = {
 
     if (countSpan) countSpan.textContent = pending.length;
 
-    if (!isSuperAdmin || pending.length === 0) {
+    // Only hide if the user is explicitly a non-admin Member
+    if (!isSuperAdmin) {
       panel.style.display = 'none';
-      tbody.innerHTML = `<tr><td colspan="6" class="empty">No pending user requests.</td></tr>`;
       return;
     }
 
     panel.style.display = 'block';
+
+    if (pending.length === 0) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="6" class="empty" style="padding:28px 20px; text-align:center; color:#15803d; background:rgba(220,252,231,0.25);">
+            ✨ <b>All caught up!</b> There are no pending access requests at this moment. When a user registers with Google or Email, their access request will appear here for your approval.
+          </td>
+        </tr>
+      `;
+      return;
+    }
 
     tbody.innerHTML = pending.map(u => {
       const initial = (u.full_name || u.email || 'U').charAt(0).toUpperCase();
@@ -1101,11 +1124,43 @@ const App = {
     this.updatePendingBadges();
   },
 
+  createTestAccessRequest() {
+    const testNum = Math.floor(1000 + Math.random() * 9000);
+    const testEmail = `applicant_${testNum}@example.com`;
+    const testUser = {
+      id: 'test_' + Date.now(),
+      uid: 'test_' + Date.now(),
+      email: testEmail,
+      full_name: `Applicant ${testNum}`,
+      photoURL: '',
+      auth_provider: 'google.com',
+      role: 'Member',
+      status: 'Pending',
+      approved: false,
+      created_at: new Date().toISOString()
+    };
+
+    const curUsers = JSON.parse(localStorage.getItem('dexter_users') || '[]');
+    curUsers.unshift(testUser);
+    State.users = curUsers;
+    localStorage.setItem('dexter_users', JSON.stringify(curUsers));
+    State.pendingUsers = curUsers.filter(u => u.status === 'Pending');
+
+    if (typeof fbDb !== 'undefined' && fbDb) {
+      fbDb.collection('users').doc(testUser.id).set(cleanDataForFirestore(testUser), { merge: true }).catch(() => {});
+    }
+
+    this.showFlash(`Sample access request created for ${testEmail}. You can now click "✓ Approve Access"!`, 'success');
+    this.renderDashboardPendingRequests();
+    this.updatePendingBadges();
+  },
+
   // -------------------------------------------------------------------------
   // Clients View
   // -------------------------------------------------------------------------
   renderClients() {
     this.populateSelect('client-owner-select', State.users, 'id', 'full_name', 'Unassigned');
+    this.populateSelect('edit-client-owner-select', State.users, 'id', 'full_name', 'Unassigned');
 
     const tableBody = document.getElementById('clients-table-body');
     const countEl = document.getElementById('clients-count');
@@ -1128,12 +1183,53 @@ const App = {
           <td>${escapeHtml(owner ? (owner.full_name || owner.email) : 'Unassigned')}</td>
           <td>₹${fee}</td>
           <td><span class="pill ${c.status === 'Active' ? 'active' : ''}">${escapeHtml(c.status || 'Active')}</span></td>
-          <td>
-            <button class="action-btn" onclick="App.deleteClient('${c.id}')" title="Delete client">✕</button>
+          <td style="text-align:right;">
+            <div style="display:inline-flex; align-items:center; gap:6px; justify-content:flex-end;">
+              <button type="button" class="action-btn edit-btn" onclick="App.openEditClientModal('${c.id}')" title="Edit client details">✎ Edit</button>
+              <button type="button" class="action-btn delete-btn" onclick="App.deleteClient('${c.id}')" title="Delete client">✕</button>
+            </div>
           </td>
         </tr>
       `;
     }).join('');
+  },
+
+  openEditClientModal(id) {
+    const client = State.clients.find(c => c.id === id);
+    if (!client) return;
+
+    this.populateSelect('edit-client-owner-select', State.users, 'id', 'full_name', 'Unassigned');
+
+    const modal = document.getElementById('edit-client-modal');
+    if (!modal) return;
+
+    const setVal = (id, val) => {
+      const el = document.getElementById(id);
+      if (el) el.value = (val !== undefined && val !== null) ? val : '';
+    };
+
+    setVal('edit-client-id', client.id);
+    setVal('edit-client-name', client.name);
+    setVal('edit-client-company', client.company);
+    setVal('edit-client-contact', client.contact_person);
+    setVal('edit-client-phone', client.phone);
+    setVal('edit-client-email', client.email);
+    setVal('edit-client-service', client.service);
+    setVal('edit-client-fee', client.monthly_fee);
+    setVal('edit-client-start-date', client.start_date);
+    setVal('edit-client-owner-select', client.owner_id);
+    setVal('edit-client-status', client.status || 'Active');
+    setVal('edit-client-notes', client.notes);
+
+    const titleEl = document.getElementById('edit-modal-title');
+    if (titleEl) titleEl.textContent = `Edit Client: ${client.name || 'Account'}`;
+
+    modal.style.display = 'flex';
+  },
+
+  closeEditClientModal() {
+    const modal = document.getElementById('edit-client-modal');
+    if (modal) modal.style.display = 'none';
   },
 
   async deleteClient(id) {
@@ -2101,6 +2197,56 @@ const App = {
       });
     }
 
+    // 3b. Edit Client Modal Form
+    const editClientForm = document.getElementById('edit-client-form');
+    if (editClientForm) {
+      editClientForm.addEventListener('submit', async e => {
+        e.preventDefault();
+        const getVal = (name) => {
+          const el = editClientForm.querySelector(`[name="${name}"]`);
+          return el ? el.value.trim() : '';
+        };
+
+        const id = getVal('id');
+        const name = getVal('name');
+        if (!name) {
+          App.showFlash('Please enter client or brand name.', 'error');
+          return;
+        }
+
+        const feeRaw = getVal('monthly_fee');
+        const feeVal = feeRaw ? (parseFloat(feeRaw) || 0) : 0;
+
+        const updatedFields = {
+          name: name,
+          company: getVal('company'),
+          contact_person: getVal('contact_person'),
+          phone: getVal('phone'),
+          email: getVal('email'),
+          service: getVal('service'),
+          monthly_fee: feeVal,
+          start_date: getVal('start_date') || null,
+          owner_id: getVal('owner_id') || null,
+          status: getVal('status') || 'Active',
+          notes: getVal('notes'),
+          updated_at: new Date().toISOString()
+        };
+
+        await Storage.updateItemField('clients', id, updatedFields);
+        App.closeEditClientModal();
+        App.showFlash(`Client "${name}" updated successfully.`, 'success');
+        App.renderClients();
+      });
+    }
+
+    // Close edit modal on backdrop click
+    const editModal = document.getElementById('edit-client-modal');
+    if (editModal) {
+      editModal.addEventListener('click', e => {
+        if (e.target === editModal) App.closeEditClientModal();
+      });
+    }
+
     // 4. Task Form
     const taskForm = document.getElementById('task-form');
     if (taskForm) {
@@ -2324,4 +2470,13 @@ function escapeHtml(str) {
 
 window.addEventListener('DOMContentLoaded', () => {
   App.start();
+});
+
+// Multi-Tab Real-time Synchronizer (Syncs between open tabs instantly)
+window.addEventListener('storage', (e) => {
+  if (['dexter_users', 'dexter_clients', 'dexter_tasks', 'dexter_requests', 'dexter_billing'].includes(e.key)) {
+    Storage.loadLocalData();
+    App.updatePendingBadges();
+    App.renderCurrentPage();
+  }
 });

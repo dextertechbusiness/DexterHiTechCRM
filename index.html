@@ -79,13 +79,17 @@
     </div>
 
     <!-- Live Pending User Access Requests Panel on Dashboard -->
-    <section class="panel" id="dashboard-pending-access-panel" style="display:none; border: 1.5px solid #fde68a; background: rgba(254, 252, 232, 0.75); margin-bottom: 24px;">
+    <section class="panel" id="dashboard-pending-access-panel" style="border: 1.5px solid #fde68a; background: rgba(254, 252, 232, 0.85); margin-bottom: 24px;">
       <div class="panel-head">
         <div>
           <h3 style="color:#b45309; display:flex; align-items:center; gap:8px;">
             <span>⏳</span> Pending User Access Requests (<span id="dash-pending-count">0</span>)
           </h3>
-          <p>These registered users are currently awaiting your authorization. Click <b>Approve Access</b> to unlock their dashboard access.</p>
+          <p>These registered users are awaiting your authorization. Click <b>Approve Access</b> to grant immediate entry to the dashboard.</p>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <button type="button" class="btn-secondary" onclick="App.createTestAccessRequest()" style="font-size:12px; padding:5px 12px; background:#fff;" title="Create a test access request to verify the approval workflow">＋ Test Request</button>
+          <a href="admin.html" class="primary small-btn" style="text-decoration:none; font-size:12px; padding:6px 14px;">Open Admin Panel →</a>
         </div>
       </div>
       <div class="table-wrap">
@@ -101,7 +105,7 @@
             </tr>
           </thead>
           <tbody id="dashboard-pending-tbody">
-            <tr><td colspan="6" class="empty">No pending user requests.</td></tr>
+            <tr><td colspan="6" class="empty">Loading pending requests...</td></tr>
           </tbody>
         </table>
       </div>

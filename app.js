@@ -4,6 +4,28 @@
  * Cloud Firestore, Admin Approval Workflow & Domain Authorization Helper.
  */
 
+// Designated Super Administrator Email
+const SUPER_ADMIN_EMAIL = 'aryanshinde20302003@gmail.com';
+
+// Utility to clean and sanitize objects for Cloud Firestore (removes undefined, handles NaN)
+function cleanDataForFirestore(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  const result = {};
+  for (const [key, val] of Object.entries(obj)) {
+    if (val === undefined) continue;
+    if (typeof val === 'number' && isNaN(val)) {
+      result[key] = 0;
+    } else if (val === null) {
+      result[key] = '';
+    } else if (typeof val === 'object' && !Array.isArray(val) && !(val instanceof Date)) {
+      result[key] = cleanDataForFirestore(val);
+    } else {
+      result[key] = val;
+    }
+  }
+  return result;
+}
+
 const State = {
   currentUser: null,
   users: [],
@@ -44,7 +66,7 @@ const Auth = {
             // Strictly redirect pending users to pending.html - zero dashboard access
             window.location.replace('pending.html');
           } else {
-            // Render pending card with live poller
+            // Render pending card with live snapshot watcher
             App.renderPendingPage(userProfile);
           }
           return;
@@ -52,7 +74,7 @@ const Auth = {
 
         // 3. Check for Suspended or Rejected Users
         if (userProfile.status === 'Rejected' || userProfile.status === 'Suspended') {
-          alert("Your access to Dexter HiTech CRM has been suspended or declined by the administrator. Please contact your workspace administrator.");
+          alert("Your access to Dexter HiTech CRM has been suspended or declined by the administrator. Please contact " + SUPER_ADMIN_EMAIL);
           this.logout();
           return;
         }
@@ -92,10 +114,13 @@ const Auth = {
   async syncUserProfile(firebaseUser) {
     let profile = null;
     const uid = firebaseUser.uid;
-    const email = firebaseUser.email || '';
+    const email = (firebaseUser.email || '').toLowerCase().trim();
     const name = firebaseUser.displayName || (email ? email.split('@')[0] : 'Member');
     const photoURL = firebaseUser.photoURL || '';
     const isGoogle = firebaseUser.providerData && firebaseUser.providerData.some(p => p.providerId === 'google.com');
+
+    // Check if this is the Super Admin: aryanshinde20302003@gmail.com
+    const isSuperAdmin = (email === SUPER_ADMIN_EMAIL.toLowerCase().trim());
 
     try {
       if (typeof fbDb !== 'undefined' && fbDb) {
@@ -104,18 +129,40 @@ const Auth = {
 
         if (snap.exists) {
           profile = { id: uid, ...snap.data() };
+          // If super admin, enforce Admin & Active status unconditionally
+          if (isSuperAdmin) {
+            profile.role = 'Admin';
+            profile.status = 'Active';
+            profile.approved = true;
+            await docRef.set(cleanDataForFirestore(profile), { merge: true }).catch(() => {});
+          }
         } else {
-          // Check if user email was pre-authorized by an administrator
+          // Check if user email was pre-authorized by Super Admin
           let preAuthDoc = null;
           if (email) {
-            const preAuthSnap = await fbDb.collection('users').where('email', '==', email.toLowerCase().trim()).get();
+            const preAuthSnap = await fbDb.collection('users').where('email', '==', email).get();
             if (!preAuthSnap.empty) {
               preAuthDoc = preAuthSnap.docs[0];
             }
           }
 
-          if (preAuthDoc && preAuthDoc.data().approved) {
-            // Pre-authorized by Admin!
+          if (isSuperAdmin) {
+            // Super Admin account setup
+            profile = {
+              id: uid,
+              uid: uid,
+              email: email,
+              full_name: name || 'Aryan Shinde (Admin)',
+              photoURL: photoURL,
+              auth_provider: isGoogle ? 'google.com' : 'password',
+              role: 'Admin',
+              status: 'Active',
+              approved: true,
+              created_at: new Date().toISOString()
+            };
+            await docRef.set(cleanDataForFirestore(profile), { merge: true }).catch(() => {});
+          } else if (preAuthDoc && preAuthDoc.data().approved) {
+            // Pre-authorized by Admin
             const preData = preAuthDoc.data();
             profile = {
               id: uid,
@@ -130,22 +177,14 @@ const Auth = {
               preauthorized: true,
               created_at: preData.created_at || new Date().toISOString()
             };
-            await docRef.set(profile);
+            await docRef.set(cleanDataForFirestore(profile), { merge: true }).catch(() => {});
 
             // Clean up temporary preauth entry if under a different doc ID
             if (preAuthDoc.id !== uid) {
               await fbDb.collection('users').doc(preAuthDoc.id).delete().catch(() => {});
             }
           } else {
-            // Brand new registration
-            const allUsersSnap = await fbDb.collection('users').get();
-            const isFirstUser = (allUsersSnap.empty || allUsersSnap.size === 0);
-            
-            // First user or workspace owner is automatically Admin and Active
-            const isOwner = isFirstUser || (email.toLowerCase().includes('admin') || email.toLowerCase().includes('dextertech'));
-            const role = isOwner ? 'Admin' : 'Member';
-            const status = isOwner ? 'Active' : 'Pending';
-
+            // Brand new registration: Requires approval from aryanshinde20302003@gmail.com
             profile = {
               id: uid,
               uid: uid,
@@ -153,18 +192,16 @@ const Auth = {
               full_name: name,
               photoURL: photoURL,
               auth_provider: isGoogle ? 'google.com' : 'password',
-              role: role,
-              status: status,
-              approved: isOwner,
+              role: 'Member',
+              status: 'Pending',
+              approved: false,
               created_at: new Date().toISOString()
             };
 
-            await docRef.set(profile);
+            await docRef.set(cleanDataForFirestore(profile), { merge: true }).catch(() => {});
 
-            // If new user requires approval, trigger admin email notification!
-            if (status === 'Pending') {
-              this.notifyAdminNewUser(profile);
-            }
+            // DISPATCH INSTANT NOTIFICATION TO ARYAN SHINDE!
+            this.notifyAdminNewUser(profile);
           }
         }
       }
@@ -179,9 +216,9 @@ const Auth = {
         email: email,
         full_name: name,
         photoURL: photoURL,
-        role: 'Admin',
-        status: 'Active',
-        approved: true
+        role: isSuperAdmin ? 'Admin' : 'Member',
+        status: isSuperAdmin ? 'Active' : 'Pending',
+        approved: isSuperAdmin
       };
     }
 
@@ -190,47 +227,64 @@ const Auth = {
     return profile;
   },
 
-  // Notify Workspace Admin via Email when a new user registers
+  // Notify Workspace Super Admin (aryanshinde20302003@gmail.com) via Email when any user registers
   async notifyAdminNewUser(newUser) {
-    try {
-      let adminEmail = 'business@dextertech.com';
-      if (typeof fbDb !== 'undefined' && fbDb) {
-        const adminSnap = await fbDb.collection('users').where('role', '==', 'Admin').limit(1).get();
-        if (!adminSnap.empty) {
-          const doc = adminSnap.docs[0].data();
-          if (doc.email) adminEmail = doc.email;
-        }
+    const adminEmail = SUPER_ADMIN_EMAIL;
+    console.log(`[Notify] Sending access approval notification to ${adminEmail} for:`, newUser.email);
 
-        // Record in Firestore notifications
-        await fbDb.collection('notifications').add({
+    // 1. Record in Firestore 'admin_notifications' and 'notifications'
+    if (typeof fbDb !== 'undefined' && fbDb) {
+      try {
+        const notif = {
           type: 'user_approval_request',
           userId: newUser.id,
           userEmail: newUser.email,
-          userName: newUser.full_name,
+          userName: newUser.full_name || 'New Member',
+          authProvider: newUser.auth_provider || 'Google/Email',
           adminEmail: adminEmail,
           created_at: new Date().toISOString(),
           status: 'pending'
-        });
+        };
+        await fbDb.collection('admin_notifications').add(cleanDataForFirestore(notif));
+        await fbDb.collection('notifications').add(cleanDataForFirestore(notif));
+      } catch (err) {
+        console.warn("[Notify] Firestore notification write note:", err.message);
       }
+    }
 
-      // Send automated email via FormSubmit AJAX (Free, zero setup)
+    // 2. Dispatch Automated Email via FormSubmit to aryanshinde20302003@gmail.com
+    const origin = window.location.origin || '';
+    const path = window.location.pathname.replace(/[^\/]*$/, '');
+    const adminPanelUrl = `${origin}${path}admin.html`;
+
+    const emailPayload = {
+      _subject: `[ACTION REQUIRED] New CRM User Access Request: ${newUser.full_name || newUser.email}`,
+      _template: 'table',
+      _captcha: 'false',
+      'Applicant Name': newUser.full_name || 'New Member',
+      'Applicant Email': newUser.email,
+      'Registration Time': new Date().toLocaleString(),
+      'Sign-in Method': newUser.auth_provider || 'Google OAuth / Email',
+      'Current Status': 'Pending Admin Approval (Dashboard Blocked)',
+      'Action Needed': 'A new user has registered for Dexter HiTech CRM. Please click the link below to approve or decline their access in your Admin Panel.',
+      'Admin Panel Link': adminPanelUrl
+    };
+
+    try {
       fetch('https://formsubmit.co/ajax/' + encodeURIComponent(adminEmail), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json'
         },
-        body: JSON.stringify({
-          _subject: `[Dexter HiTech CRM] New User Access Request: ${newUser.full_name}`,
-          'User Name': newUser.full_name,
-          'User Email': newUser.email,
-          'Registration Time': new Date().toLocaleString(),
-          'Action Needed': 'A new user has registered for Dexter HiTech CRM. Please log in and approve them under Team access.'
-        })
-      }).catch(err => console.warn("[Notify] Email notification note:", err));
-
+        body: JSON.stringify(emailPayload)
+      }).then(res => res.json()).then(data => {
+        console.log("[Notify] Email dispatch result:", data);
+      }).catch(err => {
+        console.warn("[Notify] FormSubmit dispatch note:", err);
+      });
     } catch (e) {
-      console.warn("[Notify] Notification dispatch note:", e);
+      console.warn("[Notify] Dispatch note:", e);
     }
   },
 
@@ -324,7 +378,7 @@ const Auth = {
 };
 
 // ---------------------------------------------------------------------------
-// 2. Storage & Firestore Sync Layer
+// 2. Storage & Firestore Sync Layer (Resilient Multi-Tier Architecture)
 // ---------------------------------------------------------------------------
 const Storage = {
   isCloud() {
@@ -360,21 +414,64 @@ const Storage = {
 
       App.updatePendingBadges();
       App.renderCurrentPage();
-      console.log("[Firebase] Firestore data synchronized.");
+      console.log("[Firebase] Firestore data synchronized successfully.");
     } catch (err) {
       console.warn("[Firebase] Background sync notice:", err.message);
     }
   },
 
   async fetchCollection(colName) {
-    const snap = await fbDb.collection(colName).get();
-    const items = [];
-    snap.forEach(doc => {
-      items.push({ id: doc.id, ...doc.data() });
-    });
-    State[colName] = items;
-    localStorage.setItem('dexter_' + colName, JSON.stringify(items));
-    return items;
+    const localKey = 'dexter_' + colName;
+    const localItems = JSON.parse(localStorage.getItem(localKey) || '[]');
+
+    if (!this.isCloud()) {
+      State[colName] = localItems;
+      return localItems;
+    }
+
+    try {
+      const snap = await fbDb.collection(colName).get();
+      const cloudItems = [];
+      snap.forEach(doc => {
+        cloudItems.push({ id: doc.id, ...doc.data() });
+      });
+
+      if (cloudItems.length > 0) {
+        // Smart Bi-directional Merge:
+        // Cloud items take precedence, but keep any locally added items not yet uploaded
+        const itemMap = new Map();
+        localItems.forEach(item => itemMap.set(item.id, item));
+        cloudItems.forEach(item => itemMap.set(item.id, item));
+        const merged = Array.from(itemMap.values());
+
+        // Upload any local items that were missing in Cloud
+        for (const item of localItems) {
+          if (!cloudItems.some(c => c.id === item.id)) {
+            fbDb.collection(colName).doc(item.id).set(cleanDataForFirestore(item), { merge: true }).catch(() => {});
+          }
+        }
+
+        State[colName] = merged;
+        localStorage.setItem(localKey, JSON.stringify(merged));
+        return merged;
+      } else if (localItems.length > 0) {
+        // Cloud collection is currently empty, but local has items -> Auto-seed Cloud Firestore!
+        console.log(`[Firebase] Seeding ${colName} (${localItems.length} items) to Firestore...`);
+        for (const item of localItems) {
+          fbDb.collection(colName).doc(item.id).set(cleanDataForFirestore(item), { merge: true }).catch(() => {});
+        }
+        State[colName] = localItems;
+        return localItems;
+      } else {
+        State[colName] = [];
+        return [];
+      }
+    } catch (err) {
+      console.warn(`[Firebase] fetchCollection note for ${colName}:`, err.message);
+      // On network/permission issue, NEVER wipe local data!
+      State[colName] = localItems;
+      return localItems;
+    }
   },
 
   async saveItem(colName, item) {
@@ -385,39 +482,61 @@ const Storage = {
       item.created_at = new Date().toISOString();
     }
 
-    const list = State[colName];
-    const idx = list.findIndex(x => x.id === item.id);
-    if (idx >= 0) {
-      list[idx] = item;
-    } else {
-      list.unshift(item);
-    }
+    const cleanItem = cleanDataForFirestore(item);
 
+    // 1. Immediately persist to State in memory
+    const list = State[colName] || [];
+    const idx = list.findIndex(x => x.id === cleanItem.id);
+    if (idx >= 0) {
+      list[idx] = cleanItem;
+    } else {
+      list.unshift(cleanItem);
+    }
+    State[colName] = list;
+
+    // 2. Immediately persist to LocalStorage (Instant 0ms durability)
     localStorage.setItem('dexter_' + colName, JSON.stringify(list));
 
+    // 3. Persist to Cloud Firestore with error protection
     if (this.isCloud()) {
-      await fbDb.collection(colName).doc(item.id).set(item);
+      try {
+        await fbDb.collection(colName).doc(cleanItem.id).set(cleanItem, { merge: true });
+        console.log(`[Firebase] Saved ${colName}/${cleanItem.id} to Firestore.`);
+      } catch (err) {
+        console.warn(`[Firebase] Firestore write note for ${colName}:`, err.message);
+      }
     }
-    return item;
+    return cleanItem;
   },
 
   async updateItemField(colName, id, fields) {
-    const item = State[colName].find(x => x.id === id);
+    const list = State[colName] || [];
+    const item = list.find(x => x.id === id);
+    const cleanFields = cleanDataForFirestore(fields);
+
     if (item) {
-      Object.assign(item, fields);
-      localStorage.setItem('dexter_' + colName, JSON.stringify(State[colName]));
+      Object.assign(item, cleanFields);
+      localStorage.setItem('dexter_' + colName, JSON.stringify(list));
     }
     if (this.isCloud()) {
-      await fbDb.collection(colName).doc(id).update(fields);
+      try {
+        await fbDb.collection(colName).doc(id).set(cleanFields, { merge: true });
+      } catch (err) {
+        console.warn(`[Firebase] Firestore update note:`, err.message);
+      }
     }
   },
 
   async deleteItem(colName, id) {
-    State[colName] = State[colName].filter(x => x.id !== id);
+    State[colName] = (State[colName] || []).filter(x => x.id !== id);
     localStorage.setItem('dexter_' + colName, JSON.stringify(State[colName]));
 
     if (this.isCloud()) {
-      await fbDb.collection(colName).doc(id).delete();
+      try {
+        await fbDb.collection(colName).doc(id).delete();
+      } catch (err) {
+        console.warn(`[Firebase] Firestore delete note:`, err.message);
+      }
     }
   }
 };
@@ -1201,11 +1320,28 @@ const App = {
       }
     }
 
-    // Auto-poll approval status every 6 seconds live
+    // Live real-time Firestore listener on user approval document
+    if (typeof fbDb !== 'undefined' && fbDb && user.uid) {
+      if (this._userDocUnsub) this._userDocUnsub();
+      this._userDocUnsub = fbDb.collection('users').doc(user.uid).onSnapshot(doc => {
+        if (doc.exists) {
+          const data = doc.data();
+          if (data.status === 'Active') {
+            const statusText = document.getElementById('pending-status-text');
+            if (statusText) statusText.textContent = '✓ Access approved by Admin! Opening dashboard...';
+            setTimeout(() => {
+              window.location.replace('index.html');
+            }, 600);
+          }
+        }
+      }, err => console.warn("Snapshot watcher note:", err));
+    }
+
+    // Auto-poll approval status every 4 seconds live as backup
     if (!this._pendingPoller) {
       this._pendingPoller = setInterval(async () => {
         await this.checkPendingApprovalStatus(false);
-      }, 6000);
+      }, 4000);
     }
   },
 
@@ -1224,11 +1360,11 @@ const App = {
         if (snap.exists) {
           const data = snap.data();
           if (data.status === 'Active') {
-            if (statusText) statusText.textContent = '✓ Access approved! Redirecting to dashboard...';
+            if (statusText) statusText.textContent = '✓ Access approved by Admin! Opening dashboard...';
             if (this._pendingPoller) clearInterval(this._pendingPoller);
             setTimeout(() => {
               window.location.replace('index.html');
-            }, 600);
+            }, 500);
             return;
           }
         }
@@ -1243,7 +1379,7 @@ const App = {
           btn.disabled = false;
           btn.textContent = 'Check Status Now ↻';
         }
-        alert("Your account is still awaiting administrator approval. You will receive an email as soon as your access is granted.");
+        alert("Your account is still awaiting approval from aryanshinde20302003@gmail.com. As soon as the admin approves, you will gain access immediately.");
       }, 500);
     }
   },
@@ -1273,7 +1409,28 @@ const App = {
     this.renderAdminPanel();
   },
 
+  initAdminRealtimeListener() {
+    if (typeof fbDb !== 'undefined' && fbDb && !this._adminListenerAttached) {
+      this._adminListenerAttached = true;
+      try {
+        fbDb.collection('users').onSnapshot(snap => {
+          const cloudUsers = [];
+          snap.forEach(doc => {
+            cloudUsers.push({ id: doc.id, ...doc.data() });
+          });
+          if (cloudUsers.length > 0) {
+            State.users = cloudUsers;
+            localStorage.setItem('dexter_users', JSON.stringify(cloudUsers));
+            this.updatePendingBadges();
+            this.renderAdminUsersTable();
+          }
+        }, err => console.warn("Admin realtime note:", err));
+      } catch (e) {}
+    }
+  },
+
   renderAdminPanel() {
+    this.initAdminRealtimeListener();
     const users = State.users || [];
     const pendingUsers = users.filter(u => u.status === 'Pending');
     const activeUsers = users.filter(u => u.status === 'Active');
@@ -1466,43 +1623,52 @@ const App = {
     const userEmail = user ? user.email : '';
     const userName = user ? user.full_name : 'Team Member';
 
+    // 1. Update user profile to Active in Firestore and LocalStorage
     await Storage.updateItemField('users', userId, {
       status: 'Active',
       approved: true,
       role: assignedRole,
       approved_at: new Date().toISOString(),
-      approved_by: State.currentUser ? State.currentUser.email : 'Admin'
+      approved_by: SUPER_ADMIN_EMAIL
     });
 
-    // Record audit event in Firestore
+    // 2. Record approval in Firestore notifications
     if (typeof fbDb !== 'undefined' && fbDb) {
-      await fbDb.collection('notifications').add({
+      await fbDb.collection('notifications').add(cleanDataForFirestore({
         type: 'user_approval_granted',
         userId: userId,
         userEmail: userEmail,
         userName: userName,
         assignedRole: assignedRole,
-        approvedBy: State.currentUser ? State.currentUser.email : 'Admin',
+        approvedBy: SUPER_ADMIN_EMAIL,
         created_at: new Date().toISOString(),
         status: 'completed'
-      }).catch(() => {});
+      })).catch(() => {});
     }
 
-    // Send confirmation email to user
+    // 3. Send automated confirmation email to applicant
     if (userEmail) {
+      const origin = window.location.origin || '';
+      const path = window.location.pathname.replace(/[^\/]*$/, '');
+      const dashboardUrl = `${origin}${path}index.html`;
+
       fetch('https://formsubmit.co/ajax/' + encodeURIComponent(userEmail), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify({
           _subject: `[Dexter HiTech CRM] Your Dashboard Access Has Been Approved!`,
-          'Status': 'Access Granted',
-          'Role': assignedRole,
-          'Message': `Hello ${userName}, your access request for Dexter HiTech CRM has been approved by the administrator. You can now access the CRM dashboard at any time.`
+          _template: 'table',
+          _captcha: 'false',
+          'Status': 'Access Granted (Approved)',
+          'Role Assigned': assignedRole,
+          'Approved By': SUPER_ADMIN_EMAIL,
+          'Message': `Hello ${userName}, your access request for Dexter HiTech CRM has been approved. You now have full access to the dashboard.`,
+          'Dashboard Link': dashboardUrl
         })
       }).catch(() => {});
     }
 
-    this.showFlash(`User ${userEmail} approved with role ${assignedRole}. Dashboard access unlocked!`, 'success');
+    this.showFlash(`User ${userEmail} approved with role ${assignedRole}! Dashboard access granted.`, 'success');
     await Storage.syncWithFirestore();
     this.renderAdminPanel();
     this.updatePendingBadges();

@@ -1589,6 +1589,7 @@ footer span { margin-left: 10px; color: #c0c2c6; }
 }
 @media (max-width:1024px){ :root{ --g-sidebar-w:220px; } }
 @media (max-width:850px){ :root{ --g-gap:16px; --g-pad:18px; } }
+@media (max-width:480px){ :root{ --g-gap:12px; --g-pad:15px; --g-r-xl:20px; --g-r-lg:18px; } }
 
 /* page */
 body:has(> .sidebar) { background: var(--g-page); color: var(--g-text); }
@@ -1659,15 +1660,22 @@ body:has(> .sidebar) .sidebar {
   }
 }
 @media (max-width: 850px) {
-  body:has(> .sidebar) .main { padding: var(--g-gap); }
+  body:has(> .sidebar) .main {
+    margin-left: 0;
+    padding: var(--g-gap);
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
   body:has(> .sidebar) .sidebar {
     background: rgba(255,255,255,.96);
     -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px);
     border-radius: 0 24px 24px 0;
+    z-index: 1001;
   }
   body:has(> .sidebar) .topbar { padding: 14px 18px; }
   body:has(> .sidebar) .mobile-header {
-    background: rgba(255,255,255,.72);
+    background: rgba(255,255,255,.85);
     -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px);
     border-bottom: 1px solid var(--g-edge);
   }
@@ -1844,11 +1852,22 @@ body:has(> .sidebar) .admin-filter-tabs {
   box-shadow: inset 0 0 0 1px var(--g-edge);
   border-radius: var(--g-r-pill);
   padding: 3px;
+  display: flex;
+  gap: 4px;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+body:has(> .sidebar) .admin-filter-tabs::-webkit-scrollbar {
+  display: none;
 }
 body:has(> .sidebar) .filter-tab-btn {
   color: var(--g-text-muted);
   border-radius: var(--g-r-pill);
   transition: all .2s ease;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 body:has(> .sidebar) .filter-tab-btn:hover {
   color: var(--g-text);
@@ -1931,5 +1950,267 @@ body:has(> .sidebar) .pill.in-progress {
   background: rgba(91,92,230,.12);
   color: #4338ca;
   box-shadow: inset 0 0 0 1px rgba(91,92,230,.28);
+}
+
+/* =========================================================================
+   RESPONSIVE DESIGN SUITE (Desktop, Tablet, Mobile) - CLEAN & MINIMAL
+   ========================================================================= */
+
+/* Mobile Header & Drawer Components */
+body:has(> .sidebar) .mobile-header {
+  height: 56px;
+  padding: 0 16px;
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(255, 255, 255, 0.88);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  backdrop-filter: blur(20px) saturate(140%);
+  border-bottom: 1px solid var(--g-edge);
+  position: sticky;
+  top: 0;
+  z-index: 999;
+}
+body:has(> .sidebar) .mobile-header .brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: var(--g-text);
+  font: 700 13px 'Manrope', sans-serif;
+  letter-spacing: .06em;
+}
+body:has(> .sidebar) .mobile-toggle {
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  border: 1px solid var(--g-edge);
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--g-text);
+  font-size: 18px;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(20,24,33,.05);
+  transition: transform .15s ease, background .2s ease;
+}
+body:has(> .sidebar) .mobile-toggle:active {
+  transform: scale(0.94);
+}
+body:has(> .sidebar) .sidebar-overlay {
+  z-index: 1000;
+  background: rgba(15, 23, 42, 0.45);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+body:has(> .sidebar) .sidebar-close-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--g-edge);
+  background: rgba(255,255,255,.9);
+  color: var(--g-text-muted);
+  font-size: 14px;
+  cursor: pointer;
+  position: absolute;
+  top: 18px;
+  right: 16px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 6px rgba(20,24,33,.06);
+  transition: all .2s ease;
+}
+body:has(> .sidebar) .sidebar-close-btn:hover {
+  color: var(--g-text);
+  background: #ffffff;
+}
+
+/* Base Panel & Table Elasticity */
+body:has(> .sidebar) .panel {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+body:has(> .sidebar) .panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+body:has(> .sidebar) .table-wrap {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+body:has(> .sidebar) th,
+body:has(> .sidebar) td {
+  padding: 12px 14px;
+}
+body:has(> .sidebar) th {
+  font-size: 11px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  font-weight: 700;
+  white-space: nowrap;
+}
+body:has(> .sidebar) td .pill,
+body:has(> .sidebar) td .access-badge,
+body:has(> .sidebar) td .provider-badge,
+body:has(> .sidebar) td .btn-secondary,
+body:has(> .sidebar) td .primary {
+  white-space: nowrap;
+}
+
+/* 1. Large Monitors / Ultra-wide (> 1600px) */
+@media (min-width: 1680px) {
+  body:has(> .sidebar) .main {
+    max-width: 1560px;
+  }
+}
+
+/* 2. Tablets (<= 1024px) */
+@media (max-width: 1024px) {
+  body:has(> .sidebar) .stats-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+  body:has(> .sidebar) .admin-stats-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+  body:has(> .sidebar) .dashboard-grid {
+    grid-template-columns: 1fr !important;
+  }
+  body:has(> .sidebar) .mini-stats {
+    grid-template-columns: repeat(3, 1fr) !important;
+  }
+  body:has(> .sidebar) .form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+
+/* 3. Small Tablets & Mobile Viewport (<= 850px) */
+@media (max-width: 850px) {
+  body:has(> .sidebar) .mobile-header {
+    display: flex !important;
+  }
+  body:has(> .sidebar) .sidebar-close-btn {
+    display: flex !important;
+  }
+  body:has(> .sidebar) .topbar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  body:has(> .sidebar) .top-actions {
+    width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+  body:has(> .sidebar) .top-actions .export-btn,
+  body:has(> .sidebar) .top-actions .primary {
+    flex: 1 1 auto;
+    text-align: center;
+    justify-content: center;
+  }
+}
+
+/* 4. Tablet Portrait & Narrow (<= 768px) */
+@media (max-width: 768px) {
+  body:has(> .sidebar) .mini-stats {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+  body:has(> .sidebar) .form-grid {
+    grid-template-columns: 1fr !important;
+  }
+  body:has(> .sidebar) .span-two {
+    grid-column: span 1 !important;
+  }
+  body:has(> .sidebar) .welcome-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+}
+
+/* 5. Mobile Phones (<= 640px) */
+@media (max-width: 640px) {
+  body:has(> .sidebar) .stats-grid,
+  body:has(> .sidebar) .admin-stats-grid,
+  body:has(> .sidebar) .mini-stats {
+    grid-template-columns: 1fr !important;
+  }
+  body:has(> .sidebar) .panel-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  body:has(> .sidebar) .panel-head > div:last-child {
+    width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+  body:has(> .sidebar) .admin-filter-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  body:has(> .sidebar) .admin-search-wrap {
+    width: 100%;
+    min-width: 0;
+  }
+  body:has(> .sidebar) .modal-overlay {
+    padding: 12px;
+  }
+  body:has(> .sidebar) .modal-card {
+    padding: 20px 16px;
+    border-radius: 18px;
+    max-height: 92vh;
+  }
+  body:has(> .sidebar) .modal-head {
+    margin-bottom: 14px;
+    padding-bottom: 12px;
+  }
+  body:has(> .sidebar) .modal-head h3 {
+    font-size: 16px;
+  }
+}
+
+/* 6. Small Phones (<= 480px) */
+@media (max-width: 480px) {
+  body:has(> .sidebar) .topbar {
+    padding: 12px 14px;
+  }
+  body:has(> .sidebar) .topbar h1 {
+    font-size: 19px;
+  }
+  body:has(> .sidebar) .top-actions {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+  body:has(> .sidebar) .top-actions .export-btn,
+  body:has(> .sidebar) .top-actions .primary {
+    width: 100%;
+    justify-content: center;
+  }
+  body:has(> .sidebar) .top-actions .date-label {
+    text-align: center;
+    width: 100%;
+  }
+  body:has(> .sidebar) .stat-card {
+    padding: 14px;
+    min-height: auto;
+  }
+  body:has(> .sidebar) .stat-card strong,
+  body:has(> .sidebar) .kpi-number {
+    font-size: 22px;
+  }
 }
 /* ===== GLASS THEME END ===== */
